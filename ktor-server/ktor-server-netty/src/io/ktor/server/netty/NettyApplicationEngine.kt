@@ -1,5 +1,6 @@
 package io.ktor.server.netty
 
+import io.ktor.application.*
 import io.ktor.server.engine.*
 import io.ktor.util.*
 import io.netty.bootstrap.*
@@ -16,6 +17,7 @@ class NettyApplicationEngine(environment: ApplicationEngineEnvironment, configur
     class Configuration : BaseApplicationEngine.Configuration() {
         var requestQueueLimit: Int = 16
         var configureBootstrap: ServerBootstrap.() -> Unit = {}
+        var responseWriteTimeoutSeconds: Int = 10
     }
 
     private val configuration = Configuration().apply(configure)
@@ -35,7 +37,8 @@ class NettyApplicationEngine(environment: ApplicationEngineEnvironment, configur
             channel(NioServerSocketChannel::class.java)
             childHandler(NettyChannelInitializer(pipeline, environment,
                     callEventGroup, engineDispatcherWithShutdown, dispatcherWithShutdown,
-                    connector, configuration.requestQueueLimit))
+                    connector, configuration.requestQueueLimit,
+                    configuration.responseWriteTimeoutSeconds))
         }
     }
 
@@ -53,6 +56,7 @@ class NettyApplicationEngine(environment: ApplicationEngineEnvironment, configur
     }
 
     override fun stop(gracePeriod: Long, timeout: Long, timeUnit: TimeUnit) {
+        environment.monitor.raise(ApplicationStopPreparing, environment)
         val channelFutures = channels?.map { it.close() }.orEmpty()
 
         dispatcherWithShutdown.prepareShutdown()

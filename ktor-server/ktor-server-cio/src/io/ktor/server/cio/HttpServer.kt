@@ -7,21 +7,17 @@ import io.ktor.network.sockets.*
 import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.Socket
 import io.ktor.network.util.*
+import io.ktor.util.*
 import kotlinx.coroutines.experimental.*
-import kotlinx.coroutines.experimental.CancellationException
-import java.io.*
+import org.slf4j.*
 import java.net.*
 import java.nio.channels.*
 import java.time.*
 import java.util.concurrent.*
+import java.util.concurrent.CancellationException
 import kotlin.coroutines.experimental.*
 
-class HttpServer(val rootServerJob: Job, val serverSocket: Deferred<ServerSocket>) {
-    companion object {
-        val CancelledServer = HttpServer(rootServerJob = Job().apply { cancel() },
-                serverSocket = CompletableDeferred<ServerSocket>().apply { completeExceptionally(java.util.concurrent.CancellationException()) })
-    }
-}
+class HttpServer(val rootServerJob: Job, val acceptJob: Job, val serverSocket: Deferred<ServerSocket>)
 
 data class HttpServerSettings(
         val host: String = "0.0.0.0",
@@ -29,56 +25,79 @@ data class HttpServerSettings(
         val connectionIdleTimeoutSeconds: Long = 45
 )
 
-fun httpServer(settings: HttpServerSettings, callDispatcher: CoroutineContext = ioCoroutineDispatcher, handler: HttpRequestHandler): HttpServer {
+fun httpServer(settings: HttpServerSettings, parentJob: Job? = null, callDispatcher: CoroutineContext = ioCoroutineDispatcher, handler: HttpRequestHandler): HttpServer {
     val socket = CompletableDeferred<ServerSocket>()
 
-    val serverJob = launch(ioCoroutineDispatcher) {
-        ActorSelectorManager(ioCoroutineDispatcher).use { selector ->
-            aSocket(selector).tcp().bind(InetSocketAddress(settings.host, settings.port)).use { server ->
-                socket.complete(server)
+    val serverLatch = CompletableDeferred<Unit>()
+    val serverJob = launch(ioCoroutineDispatcher + CoroutineName("server-root-${settings.port}") + (parentJob ?: EmptyCoroutineContext)) {
+        serverLatch.await()
+    }
 
-                val liveConnections = ConcurrentHashMap<Socket, Unit>()
-                val timeout = WeakTimeoutQueue(TimeUnit.SECONDS.toMillis(settings.connectionIdleTimeoutSeconds), Clock.systemUTC(), { TimeoutCancellationException("Connection IDLE") })
+    val selector = ActorSelectorManager(ioCoroutineDispatcher)
+    val timeout = WeakTimeoutQueue(TimeUnit.SECONDS.toMillis(settings.connectionIdleTimeoutSeconds),
+            Clock.systemUTC(),
+            { TimeoutCancellationException("Connection IDLE") })
 
-                try {
-                    while (true) {
-                        val client = server.accept()
-                        liveConnections.put(client, Unit)
-                        client.closed.invokeOnCompletion {
-                            liveConnections.remove(client)
-                        }
+    val acceptJob = launch(ioCoroutineDispatcher + serverJob + CoroutineName("accept-${settings.port}")) {
+        aSocket(selector).tcp().bind(InetSocketAddress(settings.host, settings.port)).use { server ->
+            socket.complete(server)
 
-                        try {
-                            launch(ioCoroutineDispatcher) {
-                                try {
-                                    handleConnectionPipeline(client.openReadChannel(), client.openWriteChannel(true), ioCoroutineDispatcher, callDispatcher, timeout, handler)
-                                } catch (io: IOException) {
-                                } finally {
-                                    client.close()
-                                }
-                            }
-                        } catch (rejected: Throwable) {
-                            client.close()
-                        }
-                    }
-                } catch (cancelled: CancellationException) {
-                } catch (closed: ClosedChannelException) {
-                } finally {
-                    server.close()
-                    server.awaitClosed()
-                    liveConnections.keys.forEach {
-                        it.close()
-                    }
-                    while (liveConnections.isNotEmpty()) {
-                        liveConnections.keys.forEach {
-                            it.close()
-                            it.awaitClosed()
-                        }
+            try {
+                val parentAndHandler = serverJob + KtorUncaughtExceptionHandler()
+
+                while (true) {
+                    val client: Socket = server.accept()
+
+                    val clientJob = startConnectionPipeline(
+                            input = client.openReadChannel(),
+                            output = client.openWriteChannel(),
+                            parentJob = parentAndHandler,
+                            ioContext = ioCoroutineDispatcher,
+                            callContext = callDispatcher,
+                            timeout = timeout,
+                            handler = handler
+                    )
+
+                    clientJob.invokeOnCompletion {
+                        client.close()
                     }
                 }
+            } catch (closed: ClosedChannelException) {
+                coroutineContext.cancel(closed)
+            } finally {
+                server.close()
+                server.awaitClosed()
             }
         }
     }
 
-    return HttpServer(serverJob, socket)
+    acceptJob.invokeOnCompletion { t ->
+        t?.let { socket.completeExceptionally(it) }
+        serverLatch.complete(Unit)
+        timeout.process()
+    }
+
+    serverJob.invokeOnCompletion(onCancelling = true) {
+        timeout.cancel()
+    }
+    serverJob.invokeOnCompletion {
+        selector.close()
+    }
+
+    return HttpServer(serverJob, acceptJob, socket)
+}
+
+private class KtorUncaughtExceptionHandler : CoroutineExceptionHandler {
+    private val logger = LoggerFactory.getLogger(KtorUncaughtExceptionHandler::class.java)
+
+    override val key: CoroutineContext.Key<*>
+        get() = CoroutineExceptionHandler.Key
+
+    override fun handleException(context: CoroutineContext, exception: Throwable) {
+        if (exception is CancellationException) return
+
+        logger.error(exception)
+        // unlike the default coroutine exception handler we shouldn't cancel parent job here
+        // otherwise single call failure will cancel the whole server
+    }
 }

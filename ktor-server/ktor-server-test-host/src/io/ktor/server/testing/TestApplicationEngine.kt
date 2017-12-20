@@ -21,36 +21,36 @@ class TestApplicationEngine(environment: ApplicationEngineEnvironment = createTe
     }
 
     override fun stop(gracePeriod: Long, timeout: Long, timeUnit: TimeUnit) {
+        environment.monitor.raise(ApplicationStopPreparing, environment)
         environment.stop()
     }
 
-
     fun handleRequest(setup: TestApplicationRequest.() -> Unit): TestApplicationCall {
-        val call = createCall(setup)
-        runBlocking {
-            pipeline.execute(call)
-        }
-        return call
+        return createCall(setup).apply { execute(this) }
     }
 
-    fun handleWebSocket(uri: String, setup: TestApplicationRequest.() -> Unit): TestApplicationCall {
-        val call = createCall {
-            this.uri = uri
-            addHeader(HttpHeaders.Connection, "Upgrade")
-            addHeader(HttpHeaders.Upgrade, "websocket")
-            addHeader(HttpHeaders.SecWebSocketKey, encodeBase64("test".toByteArray()))
+    fun handleWebSocket(uri: String, setup: TestApplicationRequest.() -> Unit): TestApplicationCall = createCall {
+        this.uri = uri
+        addHeader(HttpHeaders.Connection, "Upgrade")
+        addHeader(HttpHeaders.Upgrade, "websocket")
+        addHeader(HttpHeaders.SecWebSocketKey, encodeBase64("test".toByteArray()))
 
-            setup()
-        }
-
-        runBlocking(Unconfined) { pipeline.execute(call) }
-
-        return call
-    }
+        setup()
+    }.apply { execute(this) }
 
     fun createCall(setup: TestApplicationRequest.() -> Unit): TestApplicationCall {
         return TestApplicationCall(application).apply {
             setup(request)
+        }
+    }
+
+    private fun execute(call: TestApplicationCall) = launch(Unconfined) {
+        try {
+            pipeline.execute(call)
+        } catch (t: Throwable) {
+            call.response.complete(t)
+        } finally {
+            call.response.complete()
         }
     }
 }

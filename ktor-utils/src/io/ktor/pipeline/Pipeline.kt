@@ -90,15 +90,8 @@ open class Pipeline<TSubject : Any, TContext : Any>(vararg phases: PipelinePhase
 
     companion object {
         @JvmStatic
-        private fun <T> ArrayList<T>.fastAddAll(list: ArrayList<T>) {
-            ensureCapacity(size + list.size)
-            for (index in 0..list.lastIndex) {
-                add(list[index])
-            }
-        }
-
-        @JvmStatic
         private fun <TSubject : Any, Call : Any> ArrayList<PhaseContent<TSubject, Call>>.findPhase(phase: PipelinePhase): PhaseContent<TSubject, Call>? {
+            @Suppress("LoopToCallChain")
             for (index in 0..lastIndex) {
                 val localPhase = get(index)
                 if (localPhase.phase == phase)
@@ -116,8 +109,7 @@ open class Pipeline<TSubject : Any, TContext : Any>(vararg phases: PipelinePhase
             @Suppress("LoopToCallChain")
             for (index in 0..fromPhases.lastIndex) {
                 val fromContent = fromPhases[index]
-                val interceptors = ArrayList<PipelineInterceptor<TSubject, TContext>>(fromContent.interceptors.size)
-                interceptors.fastAddAll(fromContent.interceptors)
+                val interceptors = ArrayList<PipelineInterceptor<TSubject, TContext>>(fromContent.interceptors)
                 phases.add(PhaseContent(fromContent.phase, fromContent.relation, interceptors))
             }
             interceptorsQuantity += from.interceptorsQuantity
@@ -136,7 +128,7 @@ open class Pipeline<TSubject : Any, TContext : Any>(vararg phases: PipelinePhase
                 }
                 phases.first { it.phase == fromContent.phase }
             }
-            phaseContent.interceptors.fastAddAll(fromContent.interceptors)
+            phaseContent.interceptors.addAll(fromContent.interceptors)
             interceptorsQuantity += fromContent.interceptors.size
         }
         interceptors = null
@@ -147,7 +139,7 @@ inline suspend fun <TContext : Any> Pipeline<Unit, TContext>.execute(context: TC
 
 inline fun <reified TSubject : Any, TContext : Any> Pipeline<*, TContext>.intercept(
         phase: PipelinePhase,
-        crossinline block: PipelineContext<TSubject, TContext>.(TSubject) -> Unit) {
+        noinline block: suspend PipelineContext<TSubject, TContext>.(TSubject) -> Unit) {
 
     intercept(phase) interceptor@ { subject ->
         subject as? TSubject ?: return@interceptor

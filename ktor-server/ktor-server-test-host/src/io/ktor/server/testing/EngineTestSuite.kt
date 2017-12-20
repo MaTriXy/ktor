@@ -2,9 +2,8 @@ package io.ktor.server.testing
 
 import io.ktor.application.*
 import io.ktor.cio.*
-import io.ktor.client.*
 import io.ktor.client.request.*
-import io.ktor.client.utils.*
+import io.ktor.client.response.*
 import io.ktor.content.*
 import io.ktor.features.*
 import io.ktor.http.*
@@ -166,11 +165,7 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
         withUrl("/", {
             method = HttpMethod.Post
             header(HttpHeaders.ContentType, ContentType.Application.FormUrlEncoded.toString())
-            body = OutputStreamBody {
-                it.bufferedWriter().use {
-                    valuesOf("a" to listOf("1")).formUrlEncodeTo(it)
-                }
-            }
+            body = valuesOf("a" to listOf("1")).formUrlEncode()
         }) {
             assertEquals(200, status.value)
             assertEquals("a=1", readText())
@@ -254,6 +249,24 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
         withUrl("/") {
             assertEquals(200, status.value)
             assertEquals("test-etag", headers[HttpHeaders.ETag])
+            assertNull(headers[HttpHeaders.TransferEncoding])
+            assertEquals("5", headers[HttpHeaders.ContentLength])
+        }
+    }
+
+    @Test
+    fun testHeadRequest() {
+        createAndStartServer {
+            install(AutoHeadResponse)
+            handle {
+                call.respondText("Hello")
+            }
+        }
+
+        withUrl("/", { method = HttpMethod.Head }) {
+            assertEquals(200, status.value)
+            assertNull(headers[HttpHeaders.TransferEncoding])
+            assertEquals("5", headers[HttpHeaders.ContentLength])
         }
     }
 
@@ -369,7 +382,7 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
             header(HttpHeaders.AcceptEncoding, "gzip")
         }) {
             assertEquals(200, status.value)
-            assertEquals(file.readText(), GZIPInputStream(bodyStream).reader().use { it.readText() })
+            assertEquals(file.readText(), GZIPInputStream(receiveContent().inputStream()).reader().use { it.readText() })
             assertEquals("gzip", headers[HttpHeaders.ContentEncoding])
         }
     }
@@ -525,9 +538,7 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
         withUrl("/?urlp=1", {
             method = HttpMethod.Post
             header(HttpHeaders.ContentType, ContentType.Application.FormUrlEncoded.toString())
-            body = OutputStreamBody {
-                it.write("formp=2".toByteArray())
-            }
+            body = ByteArrayContent("formp=2".toByteArray())
         }) {
             assertEquals(HttpStatusCode.OK.value, status.value)
             assertEquals("1,2", readText())
@@ -539,12 +550,10 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
         createAndStartServer {
             route("/echo") {
                 handle {
-                    val buffer = ByteBufferWriteChannel()
-                    call.receiveChannel().copyTo(buffer)
-
+                    val response = call.receiveChannel().toByteArray()
                     call.respond(object : OutgoingContent.ReadChannelContent() {
                         override val headers: ValuesMap get() = ValuesMap.Empty
-                        override fun readFrom() = buffer.toByteArray().toReadChannel()
+                        override fun readFrom() = ByteReadChannel(response)
                     })
                 }
             }
@@ -552,14 +561,11 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
 
         withUrl("/echo", {
             method = HttpMethod.Post
-            header(HttpHeaders.ContentType, ContentType.Text.Plain.toString())
-            body = OutputStreamBody {
-                it.bufferedWriter().use { out ->
-                    out.append("POST test\n")
-                    out.append("Another line")
-                    out.flush()
-                }
-            }
+            body = WriterContent({
+                append("POST test\n")
+                append("Another line")
+                flush()
+            }, ContentType.Text.Plain)
         }) {
             assertEquals(200, status.value)
             assertEquals("POST test\nAnother line", readText())
@@ -579,11 +585,7 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
         withUrl("/", {
             method = HttpMethod.Post
             header(HttpHeaders.ContentType, ContentType.Text.Plain.toString())
-            body = OutputStreamBody {
-                it.bufferedWriter().use {
-                    it.append("POST content")
-                }
-            }
+            body = ByteArrayContent("POST content".toByteArray())
         }) {
             assertEquals(200, status.value)
             assertEquals("POST content", readText())
@@ -612,25 +614,23 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
 
         withUrl("/", {
             method = HttpMethod.Post
-            header(HttpHeaders.ContentType, ContentType.MultiPart.FormData.withParameter("boundary", "***bbb***").toString())
+            val contentType = ContentType.MultiPart.FormData
+                    .withParameter("boundary", "***bbb***")
+                    .withCharset(Charsets.ISO_8859_1)
 
-            body = OutputStreamBody {
-                it.bufferedWriter(Charsets.ISO_8859_1).use { out ->
-                    out.apply {
-                        append("--***bbb***\r\n")
-                        append("Content-Disposition: form-data; name=\"a story\"\r\n")
-                        append("\r\n")
-                        append("Hi user. The snake you gave me for free ate all the birds. Please take it back ASAP.\r\n")
-                        append("--***bbb***\r\n")
-                        append("Content-Disposition: form-data; name=\"attachment\"; filename=\"original.txt\"\r\n")
-                        append("Content-Type: text/plain\r\n")
-                        append("\r\n")
-                        append("File content goes here\r\n")
-                        append("--***bbb***--\r\n")
-                        flush()
-                    }
-                }
-            }
+            body = WriterContent({
+                append("--***bbb***\r\n")
+                append("Content-Disposition: form-data; name=\"a story\"\r\n")
+                append("\r\n")
+                append("Hi user. The snake you gave me for free ate all the birds. Please take it back ASAP.\r\n")
+                append("--***bbb***\r\n")
+                append("Content-Disposition: form-data; name=\"attachment\"; filename=\"original.txt\"\r\n")
+                append("Content-Type: text/plain\r\n")
+                append("\r\n")
+                append("File content goes here\r\n")
+                append("--***bbb***--\r\n")
+                flush()
+            }, contentType)
         }) {
             assertEquals(200, status.value)
             assertEquals("a story=Hi user. The snake you gave me for free ate all the birds. Please take it back ASAP.\nfile:attachment,original.txt,File content goes here\n", readText())
@@ -742,10 +742,7 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
 
         withUrl("/", {
             method = HttpMethod.Post
-            header(HttpHeaders.ContentType, ContentType.Text.Plain.toString())
-            body = OutputStreamBody {
-                it.write("Hello".toByteArray())
-            }
+            body = "Hello"
         }) {
             assertEquals(200, status.value)
             assertEquals("Hello", readText())
@@ -756,15 +753,19 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
     fun testRepeatRequest() {
         createAndStartServer {
             get("/") {
+                println("Got call ${call.request.queryParameters["i"]}")
                 call.respond("OK ${call.request.queryParameters["i"]}")
+                println("Completed call ${call.request.queryParameters["i"]}")
             }
         }
 
         for (i in 1..100) {
+            println("Before $i")
             withUrl("/?i=$i") {
                 assertEquals(200, status.value)
                 assertEquals("OK $i", readText())
             }
+            println("After $i")
         }
     }
 
@@ -779,9 +780,7 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
         withUrl("/", {
             method = HttpMethod.Post
             header(HttpHeaders.ContentType, ContentType.Text.Plain.toString())
-            body = OutputStreamBody {
-                it.write("Hello".toByteArray())
-            }
+            body = ByteArrayContent("Hello".toByteArray())
         }) {
             assertEquals(200, status.value)
             assertEquals("Hello", readText())
@@ -975,7 +974,7 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
                 try {
                     withUrl("/$i") {
                         //setRequestProperty("Connection", "close")
-                        bodyStream.reader().use { reader ->
+                        receiveContent().inputStream().reader().use { reader ->
                             val firstByte = reader.read()
                             if (firstByte == -1) {
                                 //println("Premature end of response stream at iteration $i")
@@ -1024,7 +1023,7 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
             }
         }
 
-        val originalSha1 = file.inputStream().use { it.sha1() }
+        val originalSha1WithSize = file.inputStream().use { it.sha1WithSize() }
 
         createAndStartServer {
             get("/file") {
@@ -1033,7 +1032,92 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
         }
 
         withUrl("/file") {
-            assertEquals(originalSha1, bodyStream.sha1())
+            assertEquals(originalSha1WithSize, receiveContent().inputStream().sha1WithSize())
+        }
+    }
+
+    @Test
+    fun testBigFileHttpUrlConnection() {
+        val file = File("build/large-file.dat")
+        val rnd = Random()
+
+        if (!file.exists()) {
+            file.bufferedWriter().use { out ->
+                for (line in 1..9000000) {
+                    for (col in 1..(30 + rnd.nextInt(40))) {
+                        out.append('a' + rnd.nextInt(25))
+                    }
+                    out.append('\n')
+                }
+            }
+        }
+
+        val originalSha1WithSize = file.inputStream().use { it.sha1WithSize() }
+
+        createAndStartServer {
+            get("/file") {
+                call.respond(LocalFileContent(file))
+            }
+        }
+
+        val connection = URL("http://localhost:$port/file").openConnection(Proxy.NO_PROXY) as HttpURLConnection
+        connection.connectTimeout = 10_000
+        connection.readTimeout = 10_000
+
+        try {
+            assertEquals(originalSha1WithSize, connection.inputStream.sha1WithSize())
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    @Test
+    fun testClosedConnection() {
+        val completed = Job()
+
+        createAndStartServer {
+            get("/file") {
+                try {
+                    call.respond(object : OutgoingContent.WriteChannelContent() {
+                        suspend override fun writeTo(channel: ByteWriteChannel) {
+                            val bb = ByteBuffer.allocate(100)
+                            for (i in 1L..1000L) {
+                                delay(100)
+                                bb.clear()
+                                bb.putLong(i)
+                                bb.flip()
+                                channel.writeFully(bb)
+                                channel.flush()
+                            }
+
+                            channel.close()
+                        }
+                    })
+                } finally {
+                    completed.cancel()
+                }
+            }
+        }
+
+        socket {
+            outputStream.writePacket(RequestResponseBuilder().apply {
+                requestLine(HttpMethod.Get, "/file", "HTTP/1.1")
+                headerLine("Host", "localhost:$port")
+                headerLine("Connection", "keep-alive")
+                emptyLine()
+            }.build())
+
+            outputStream.flush()
+
+            inputStream.read(ByteArray(100))
+            shutdownInput()
+            shutdownOutput()
+        }
+
+        runBlocking {
+            withTimeout(1000L, TimeUnit.SECONDS) {
+                completed.join()
+            }
         }
     }
 
@@ -1132,24 +1216,13 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
                             append(HttpHeaders.Connection, "Upgrade")
                         }
 
-                    suspend override fun upgrade(input: ReadChannel, output: WriteChannel, closeable: Closeable, engineContext: CoroutineContext, userContext: CoroutineContext) {
-                        try {
+                    suspend override fun upgrade(input: ByteReadChannel, output: ByteWriteChannel, engineContext: CoroutineContext, userContext: CoroutineContext): Job {
+                        return launch(engineContext) {
                             val bb = ByteBuffer.allocate(8)
-                            while (bb.hasRemaining()) {
-                                if (input.read(bb) == -1) {
-                                    fail("Unexpected EOF")
-                                }
-                            }
-
+                            input.readFully(bb)
                             bb.flip()
-                            while (bb.hasRemaining()) {
-                                output.write(bb)
-                            }
-                            output.flush()
-                        } finally {
+                            output.writeFully(bb)
                             output.close()
-                            input.close()
-                            closeable.close()
                         }
                     }
                 })
@@ -1225,19 +1298,21 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
     private fun String.urlPath() = replace("\\", "/")
     private class ExpectedException(message: String) : RuntimeException(message)
 
-    private fun InputStream.sha1(): String {
+    private fun InputStream.sha1WithSize(): Pair<String, Long> {
         val md = MessageDigest.getInstance("SHA1")
         val bytes = ByteArray(8192)
+        var count = 0L
 
         do {
             val rc = read(bytes)
             if (rc == -1) {
                 break
             }
+            count += rc
             md.update(bytes, 0, rc)
         } while (true)
 
-        return hex(md.digest())
+        return hex(md.digest()) to count
     }
 
     companion object {

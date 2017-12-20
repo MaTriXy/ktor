@@ -19,6 +19,8 @@ private const val EXPECTED_HEADERS_QTY = 32
 private const val HEADER_SIZE = 8
 private const val HEADER_ARRAY_POOL_SIZE = 1000
 
+private val EMPTY_INT_ARRAY = IntArray(0)
+
 class HttpHeadersMap internal constructor(private val builder: CharBufferBuilder) {
     var size = 0
         private set
@@ -40,7 +42,7 @@ class HttpHeadersMap internal constructor(private val builder: CharBufferBuilder
         array[base + 6] = -1  // TODO
         array[base + 7] = -1
 
-        size ++
+        size++
     }
 
     operator fun get(name: String): CharSequence? {
@@ -55,6 +57,14 @@ class HttpHeadersMap internal constructor(private val builder: CharBufferBuilder
         return null
     }
 
+    fun getAll(name: String): Sequence<CharSequence> {
+        val nameHash = name.hashCodeLowerCase()
+        return generateSequence(0) { if (it + 1 >= size) null else it + 1 }
+                .map { it * HEADER_SIZE }
+                .filter { indexes[it] == nameHash }
+                .map { builder.subSequence(indexes[it + 4], indexes[it + 5]) }
+    }
+
     fun nameAt(idx: Int): CharSequence {
         require(idx >= 0)
         require(idx < size)
@@ -63,7 +73,7 @@ class HttpHeadersMap internal constructor(private val builder: CharBufferBuilder
         val array = indexes
 
         val nameStart = array[offset + 2]
-        val nameEnd   = array[offset + 3]
+        val nameEnd = array[offset + 3]
 
         return builder.subSequence(nameStart, nameEnd)
     }
@@ -76,14 +86,17 @@ class HttpHeadersMap internal constructor(private val builder: CharBufferBuilder
         val array = indexes
 
         val nameStart = array[offset + 4]
-        val nameEnd   = array[offset + 5]
+        val nameEnd = array[offset + 5]
 
         return builder.subSequence(nameStart, nameEnd)
     }
 
     fun release() {
         size = 0
-        IntArrayPool.recycle(indexes)
+        val idxs = indexes
+        indexes = EMPTY_INT_ARRAY
+
+        if (idxs !== EMPTY_INT_ARRAY) IntArrayPool.recycle(idxs)
     }
 }
 

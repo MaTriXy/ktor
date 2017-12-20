@@ -1,7 +1,5 @@
 package io.ktor.server.cio
 
-import io.ktor.application.*
-import io.ktor.cio.*
 import io.ktor.content.*
 import io.ktor.http.*
 import io.ktor.http.cio.*
@@ -9,10 +7,9 @@ import io.ktor.response.*
 import io.ktor.server.engine.*
 import kotlinx.coroutines.experimental.*
 import kotlinx.coroutines.experimental.io.*
-import java.io.*
 import kotlin.coroutines.experimental.*
 
-class CIOApplicationResponse(call: ApplicationCall,
+class CIOApplicationResponse(call: CIOApplicationCall,
                              private val output: ByteWriteChannel,
                              private val input: ByteReadChannel,
                              private val engineDispatcher: CoroutineContext,
@@ -28,6 +25,12 @@ class CIOApplicationResponse(call: ApplicationCall,
     @Volatile
     private var chunkedJob: Job? = null
 
+    init {
+        pipeline.intercept(ApplicationSendPipeline.Engine) {
+            call.release()
+        }
+    }
+
     override val headers = object : ResponseHeaders() {
         override fun engineAppendHeader(name: String, value: String) {
             headersNames.add(name)
@@ -38,14 +41,48 @@ class CIOApplicationResponse(call: ApplicationCall,
             return headersNames
         }
 
-        override fun getEngineHeaderValues(name: String): List<String> = headersNames.indices
-                .filter { headersNames[it].equals(name, ignoreCase = true) }
-                .map { headerValues[it] }
+        override fun getEngineHeaderValues(name: String): List<String> {
+            val names = headersNames
+            val values = headerValues
+            val size = headersNames.size
+            var firstIndex = -1
+
+            for (i in 0 until size) {
+                if (names[i].equals(name, ignoreCase = true)) {
+                    firstIndex = i
+                    break
+                }
+            }
+
+            if (firstIndex == -1) return emptyList()
+
+            var secondIndex = -1
+            for (i in firstIndex until size) {
+                if (names[i].equals(name, ignoreCase = true)) {
+                    secondIndex = i
+                    break
+                }
+            }
+
+            if (secondIndex == -1) return listOf(values[firstIndex])
+
+            val result = ArrayList<String>(size - secondIndex + 1)
+            result.add(values[firstIndex])
+            result.add(values[secondIndex])
+
+            for (i in secondIndex until size) {
+                if (names[i].equals(name, ignoreCase = true)) {
+                    result.add(values[i])
+                }
+            }
+
+            return result
+        }
     }
 
     private fun hasHeader(name: String) = headersNames.any { it.equals(name, ignoreCase = true) }
 
-    suspend override fun responseChannel(): WriteChannel {
+    suspend override fun responseChannel(): ByteWriteChannel {
         sendResponseMessage(true, -1, false)
 
         val j = encodeChunked(output, engineDispatcher)
@@ -54,7 +91,7 @@ class CIOApplicationResponse(call: ApplicationCall,
         chunkedChannel = chunked
         chunkedJob = j
 
-        return CIOWriteChannelAdapter(chunked)
+        return chunked
     }
 
     suspend override fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
@@ -62,12 +99,8 @@ class CIOApplicationResponse(call: ApplicationCall,
 
         sendResponseMessage(false, -1, false)
 
-        val upgradedJob = Job()
-        upgrade.upgrade(CIOReadChannelAdapter(input), CIOWriteChannelAdapter(output), Closeable {
-            output.close()
-            upgradedJob.cancel()
-        }, engineDispatcher, userDispatcher)
-
+        val upgradedJob = upgrade.upgrade(input, output, engineDispatcher, userDispatcher)
+        upgradedJob.invokeOnCompletion { output.close() }
         upgradedJob.join()
     }
 

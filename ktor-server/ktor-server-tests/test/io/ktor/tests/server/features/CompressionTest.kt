@@ -1,13 +1,13 @@
 package io.ktor.tests.server.features
 
 import io.ktor.application.*
-import io.ktor.cio.*
 import io.ktor.content.*
 import io.ktor.features.*
 import io.ktor.http.*
 import io.ktor.response.*
 import io.ktor.routing.*
 import io.ktor.server.testing.*
+import kotlinx.coroutines.experimental.io.*
 import org.junit.Test
 import java.time.*
 import java.util.zip.*
@@ -124,8 +124,8 @@ class CompressionTest {
             application.install(Compression) {
                 default()
                 encoder("special", object : CompressionEncoder {
-                    override fun compress(readChannel: ReadChannel) = readChannel
-                    override fun compress(writeChannel: WriteChannel) = writeChannel
+                    override fun compress(readChannel: ByteReadChannel) = readChannel
+                    override fun compress(writeChannel: ByteWriteChannel) = writeChannel
                 })
             }
             application.routing {
@@ -337,7 +337,7 @@ class CompressionTest {
             application.routing {
                 get("/") {
                     call.respond(object : Resource, OutgoingContent.ReadChannelContent() {
-                        override val headers by lazy { super<Resource>.headers }
+                        override val headers by lazy(LazyThreadSafetyMode.NONE) { super<Resource>.headers }
 
                         override val contentType: ContentType
                             get() = ContentType.Text.Plain
@@ -351,7 +351,7 @@ class CompressionTest {
 
                         override val contentLength = 4L
 
-                        override fun readFrom() = "test".byteInputStream().toReadChannel()
+                        override fun readFrom() = ByteReadChannel("test".toByteArray())
                     })
                 }
             }
@@ -439,7 +439,6 @@ class CompressionTest {
             }
         }
 
-        assertTrue(result.requestHandled)
         assertEquals(HttpStatusCode.OK, result.response.status())
         if (expectedEncoding != null) {
             assertEquals(expectedEncoding, result.response.headers[HttpHeaders.ContentEncoding])
@@ -453,6 +452,7 @@ class CompressionTest {
             assertEquals(expectedContent, result.response.content)
         }
 
+        assertTrue(result.requestHandled)
         return result
     }
 

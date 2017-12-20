@@ -3,20 +3,19 @@ package io.ktor.samples.auth
 import io.ktor.application.*
 import io.ktor.auth.*
 import io.ktor.client.*
-import io.ktor.client.backend.apache.*
+import io.ktor.client.engine.apache.*
 import io.ktor.features.*
 import io.ktor.html.*
 import io.ktor.http.*
 import io.ktor.locations.*
-import io.ktor.pipeline.*
 import io.ktor.request.*
 import io.ktor.routing.*
 import kotlinx.coroutines.experimental.*
 import kotlinx.html.*
 import java.util.concurrent.*
 
-@location("/") class index()
-@location("/login/{type?}") class login(val type: String = "")
+@Location("/") class index()
+@Location("/login/{type?}") class login(val type: String = "")
 
 /**
  * DISCLAIMER
@@ -109,9 +108,14 @@ fun Application.OAuthLoginApplication() {
             }
         }
 
+        val client = HttpClient(Apache)
+        environment.monitor.subscribe(ApplicationStopping) {
+            client.close()
+        }
+
         location<login>() {
             authentication {
-                oauthAtLocation<login>(HttpClient(ApacheBackend), exec.asCoroutineDispatcher(),
+                oauthAtLocation<login>(client, exec.asCoroutineDispatcher(),
                         providerLookup = { loginProviders[it.type] },
                         urlProvider = { _, p -> redirectUrl(login(p.name), false) })
             }

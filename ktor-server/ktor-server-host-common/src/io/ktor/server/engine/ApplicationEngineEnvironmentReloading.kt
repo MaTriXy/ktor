@@ -2,14 +2,16 @@ package io.ktor.server.engine
 
 import io.ktor.application.*
 import io.ktor.config.*
+import io.ktor.http.*
+import io.ktor.pipeline.*
 import org.slf4j.*
 import java.io.*
 import java.lang.reflect.*
 import java.net.*
+import java.net.URL
 import java.nio.file.*
 import java.nio.file.StandardWatchEventKinds.*
 import java.nio.file.attribute.*
-import java.util.*
 import java.util.concurrent.locks.*
 import kotlin.concurrent.*
 import kotlin.reflect.*
@@ -137,10 +139,15 @@ class ApplicationEngineEnvironmentReloading(
 
         // we shouldn't watch URL for ktor-server-core classes, even if they match patterns,
         // because otherwise it loads two ApplicationEnvironment (and other) types which do not match
-        val coreUrl = ApplicationEnvironment::class.java.protectionDomain.codeSource.location
+        val coreUrls = listOf(
+                ApplicationEnvironment::class.java, // ktor-server-core
+                Pipeline::class.java, // ktor-utils
+                HttpStatusCode::class.java, // ktor-http
+                kotlin.jvm.functions.Function1::class.java // kotlin-stdlib
+        ).mapTo(HashSet()) { it.protectionDomain.codeSource.location }
 
         val watchUrls = allUrls.filter { url ->
-            url != coreUrl && watchPatterns.any { pattern -> url.toString().contains(pattern) }
+            url !in coreUrls && watchPatterns.any { pattern -> url.toString().contains(pattern) }
         }
 
         if (watchUrls.isEmpty()) {
@@ -224,7 +231,16 @@ class ApplicationEngineEnvironmentReloading(
 
     override fun start() {
         applicationInstanceLock.write {
-            val (application, classLoader) = createApplication()
+            val (application, classLoader) = try {
+                createApplication()
+            } catch (t: Throwable) {
+                destroyApplication()
+                if (watchPatterns.isNotEmpty()) {
+                    watcher.close()
+                }
+
+                throw t
+            }
             _applicationInstance = application
             _applicationClassLoader = classLoader
         }

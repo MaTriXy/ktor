@@ -13,17 +13,19 @@ import java.util.concurrent.*
 
 @State(Scope.Benchmark)
 class FullBenchmark {
+    private val coreDirectory = File("../ktor-server-core").absoluteFile.normalize()
     private val testHost: TestApplicationEngine = TestApplicationEngine(createTestEnvironment())
     private val classSignature = listOf(0xca, 0xfe, 0xba, 0xbe).map(Int::toByte)
     private val packageName = FullBenchmark::class.java.`package`.name
     private val classFileName = FullBenchmark::class.simpleName!! + ".class"
-    private val pomFile = File("pom.xml")
+    private val smallFile = File(coreDirectory, "build.gradle")
 
     @Setup
     fun startServer() {
         testHost.start()
         testHost.application.routing {
             get("/sayOK") {
+                call.parameters // force lazy initialization
                 call.respond("OK")
             }
             get("/jarfile") {
@@ -35,7 +37,7 @@ class FullBenchmark {
                 call.respond(resource)
             }
             get("/regularFile") {
-                call.respond(LocalFileContent(pomFile))
+                call.respond(LocalFileContent(smallFile))
             }
         }
     }
@@ -47,6 +49,13 @@ class FullBenchmark {
 
     @Benchmark
     fun sayOK() = handle("/sayOK") {
+        if (response.content != "OK") {
+            throw IllegalStateException()
+        }
+    }
+
+    @Benchmark
+    fun sayOKLongParams() = handle("/sayOK?utm_source=Yandex&utm_medium=cpc&utm_campaign=shuby_Ekb_search&utm_content=obshie&page=6") {
         if (response.content != "OK") {
             throw IllegalStateException()
         }
@@ -81,11 +90,12 @@ class FullBenchmark {
 }
 
 /*
-FullBenchmark.sayClasspathResourceFromJar  thrpt   10   23.610 ± 1.580  ops/ms
-FullBenchmark.sayClasspathResourceRegular  thrpt   10   15.055 ± 0.215  ops/ms
-FullBenchmark.sayOK                        thrpt   10  138.655 ± 2.271  ops/ms
-FullBenchmark.sayRegularFile               thrpt   10   24.001 ± 0.254  ops/ms
- */
+Benchmark                                   Mode  Cnt    Score    Error   Units
+FullBenchmark.sayClasspathResourceFromJar  thrpt   20   29.682 ±  0.355  ops/ms
+FullBenchmark.sayClasspathResourceRegular  thrpt   20   65.846 ±  0.929  ops/ms
+FullBenchmark.sayOK                        thrpt   20  970.297 ± 13.466  ops/ms
+FullBenchmark.sayOKLongParams              thrpt   20  562.497 ±  6.192  ops/ms
+*/
 
 fun main(args: Array<String>) {
     benchmark(args) {

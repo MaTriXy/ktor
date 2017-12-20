@@ -14,22 +14,45 @@ abstract class HeaderValueWithParameters(protected val content: String, val para
                     append("; ")
                     append(name)
                     append("=")
-                    append(value.escapeIfNeeded())
+                    value.escapeIfNeededTo(this)
                 }
             }.toString()
         }
     }
 
     companion object {
-        fun <R> parse(value: String, init: (String, List<HeaderValueParam>) -> R) = parseHeaderValue(value).single().let { preParsed ->
-            init(preParsed.value, preParsed.params)
+        inline fun <R> parse(value: String, init: (String, List<HeaderValueParam>) -> R): R {
+            val headerValue = parseHeaderValue(value).single()
+            return init(headerValue.value, headerValue.params)
         }
     }
 }
 
+private val CHARACTERS_SHOULD_BE_ESCAPED = "\"=;,\\/".toCharArray()
 fun String.escapeIfNeeded() = when {
-    indexOfAny("\"=;,\\/".toCharArray()) != -1 -> quote()
+    indexOfAny(CHARACTERS_SHOULD_BE_ESCAPED) != -1 -> quote()
     else -> this
 }
 
-fun String.quote() = "\"" + replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("\"", "\\\"") + "\""
+private fun String.escapeIfNeededTo(out: StringBuilder) {
+    when {
+        indexOfAny(CHARACTERS_SHOULD_BE_ESCAPED) != -1 -> quoteTo(out)
+        else -> out.append(this)
+    }
+}
+
+fun String.quote() = buildString { this@quote.quoteTo(this) }
+private fun String.quoteTo(out: StringBuilder) {
+    out.append("\"")
+    for (i in 0 until length) {
+        val ch = this[i]
+        when (ch) {
+            '\\' -> out.append("\\\\")
+            '\n' -> out.append("\\n")
+            '\r' -> out.append("\\r")
+            '\"' -> out.append("\\\"")
+            else -> out.append(ch)
+        }
+    }
+    out.append("\"")
+}

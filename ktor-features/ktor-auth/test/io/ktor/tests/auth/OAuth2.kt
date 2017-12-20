@@ -3,11 +3,13 @@ package io.ktor.tests.auth
 import io.ktor.application.*
 import io.ktor.auth.*
 import io.ktor.client.*
+import io.ktor.client.engine.*
 import io.ktor.http.*
 import io.ktor.request.*
 import io.ktor.response.*
 import io.ktor.routing.*
 import io.ktor.server.testing.*
+import io.ktor.server.testing.client.*
 import io.ktor.util.*
 import kotlinx.coroutines.experimental.*
 import org.json.simple.*
@@ -97,6 +99,7 @@ class OAuth2Test {
 
     @After
     fun tearDown() {
+        testClient.close()
         executor.shutdownNow()
     }
 
@@ -248,7 +251,7 @@ class OAuth2Test {
             application.routing {
                 get("/login") {
                     oauthHandleCallback(testClient, dispatcher, settings, "http://localhost/login", "/", {
-                        url.addQueryParameter("badContentType", "true")
+                        url.parameters["badContentType"] = "true"
                     }) { token ->
                         call.respondText("Ho, $token")
                     }
@@ -373,7 +376,7 @@ private fun createOAuth2Server(server: OAuth2Server): HttpClient {
     }
     val engine = TestApplicationEngine(environment)
     engine.start()
-    return HttpClient({ TestHttpClientBackend(engine) })
+    return HttpClient(TestHttpClientEngine.config { app = engine })
 }
 
 private fun ValuesMap.requireParameter(name: String) = get(name) ?: throw IllegalArgumentException("No parameter $name specified")

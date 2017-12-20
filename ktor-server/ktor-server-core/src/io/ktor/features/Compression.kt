@@ -8,6 +8,7 @@ import io.ktor.pipeline.*
 import io.ktor.request.*
 import io.ktor.response.*
 import io.ktor.util.*
+import kotlinx.coroutines.experimental.io.*
 
 /**
  * Compression feature configuration
@@ -81,7 +82,7 @@ class Compression(compression: Configuration) {
 
             val encoderOptions = encoders.firstOrNull { it.conditions.all { it(call, message) } }
 
-            val channel: () -> ReadChannel = when (message) {
+            val channel: () -> ByteReadChannel = when (message) {
                 is OutgoingContent.ReadChannelContent -> ({ message.readFrom() })
                 is OutgoingContent.WriteChannelContent -> {
                     if (encoderOptions != null) {
@@ -91,7 +92,7 @@ class Compression(compression: Configuration) {
                     return
                 }
                 is OutgoingContent.NoContent -> return
-                is OutgoingContent.ByteArrayContent -> ({ message.bytes().toReadChannel() })
+                is OutgoingContent.ByteArrayContent -> ({ ByteReadChannel(message.bytes()) })
                 is OutgoingContent.ProtocolUpgrade -> return
             }
 
@@ -103,9 +104,9 @@ class Compression(compression: Configuration) {
         }
     }
 
-    private class CompressedResponse(val delegateChannel: () -> ReadChannel, val delegateHeaders: ValuesMap, override val status: HttpStatusCode?, val encoding: String, val encoder: CompressionEncoder) : OutgoingContent.ReadChannelContent() {
+    private class CompressedResponse(val delegateChannel: () -> ByteReadChannel, val delegateHeaders: ValuesMap, override val status: HttpStatusCode?, val encoding: String, val encoder: CompressionEncoder) : OutgoingContent.ReadChannelContent() {
         override fun readFrom() = encoder.compress(delegateChannel())
-        override val headers by lazy {
+        override val headers by lazy(LazyThreadSafetyMode.NONE) {
             ValuesMap.build(true) {
                 appendFiltered(delegateHeaders) { name, _ -> !name.equals(HttpHeaders.ContentLength, true) }
                 append(HttpHeaders.ContentEncoding, encoding)
@@ -114,15 +115,15 @@ class Compression(compression: Configuration) {
     }
 
     private class CompressedWriteResponse(val delegate: WriteChannelContent, override val status: HttpStatusCode?, val encoding: String, val encoder: CompressionEncoder) : OutgoingContent.WriteChannelContent() {
-        override val headers by lazy {
+        override val headers by lazy(LazyThreadSafetyMode.NONE) {
             ValuesMap.build(true) {
                 appendFiltered(delegate.headers) { name, _ -> !name.equals(HttpHeaders.ContentLength, true) }
                 append(HttpHeaders.ContentEncoding, encoding)
             }
         }
 
-        override suspend fun writeTo(channel: WriteChannel) {
-            return delegate.writeTo(encoder.compress(channel))
+        override suspend fun writeTo(channel: ByteWriteChannel) {
+            delegate.writeTo(encoder.compress(channel))
         }
     }
 
@@ -192,38 +193,38 @@ private fun ApplicationCall.isCompressionSuppressed() = Compression.SuppressionA
  */
 interface CompressionEncoder {
     /**
-     * Wraps [readChannel] into a compressing [ReadChannel]
+     * Wraps [readChannel] into a compressing [ByteReadChannel]
      */
-    fun compress(readChannel: ReadChannel): ReadChannel
+    fun compress(readChannel: ByteReadChannel): ByteReadChannel
 
     /**
-     * Wraps [writeChannel] into a compressing [WriteChannel]
+     * Wraps [writeChannel] into a compressing [ByteWriteChannel]
      */
-    fun compress(writeChannel: WriteChannel): WriteChannel
+    fun compress(writeChannel: ByteWriteChannel): ByteWriteChannel
 }
 
 /**
  * Implementation of the gzip encoder
  */
 object GzipEncoder : CompressionEncoder {
-    override fun compress(readChannel: ReadChannel) = readChannel.deflated(true)
-    override fun compress(writeChannel: WriteChannel) = writeChannel.deflated(true)
+    override fun compress(readChannel: ByteReadChannel) = readChannel.deflated(true)
+    override fun compress(writeChannel: ByteWriteChannel) = writeChannel.deflated(true)
 }
 
 /**
  * Implementation of the deflate encoder
  */
 object DeflateEncoder : CompressionEncoder {
-    override fun compress(readChannel: ReadChannel) = readChannel.deflated(false)
-    override fun compress(writeChannel: WriteChannel) = writeChannel.deflated(false)
+    override fun compress(readChannel: ByteReadChannel) = readChannel.deflated(false)
+    override fun compress(writeChannel: ByteWriteChannel) = writeChannel.deflated(false)
 }
 
 /**
  *  Implementation of the identity encoder
  */
 object IdentityEncoder : CompressionEncoder {
-    override fun compress(readChannel: ReadChannel) = readChannel
-    override fun compress(writeChannel: WriteChannel) = writeChannel
+    override fun compress(readChannel: ByteReadChannel) = readChannel
+    override fun compress(writeChannel: ByteWriteChannel) = writeChannel
 }
 
 /**

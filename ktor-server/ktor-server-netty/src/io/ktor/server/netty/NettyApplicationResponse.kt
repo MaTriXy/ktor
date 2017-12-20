@@ -3,6 +3,7 @@ package io.ktor.server.netty
 import io.ktor.cio.*
 import io.ktor.content.*
 import io.ktor.http.*
+import io.ktor.http.HttpHeaders
 import io.ktor.response.*
 import io.ktor.server.engine.*
 import io.netty.channel.*
@@ -31,7 +32,12 @@ internal abstract class NettyApplicationResponse(call: NettyApplicationCall,
 
     suspend override fun respondOutgoingContent(content: OutgoingContent) {
         try {
-            super.respondOutgoingContent(content)
+            if (content is OutgoingContent.NoContent && HttpHeaders.ContentLength in content.headers) {
+                commitHeaders(content)
+                sendResponse(false, EmptyByteReadChannel)
+            } else {
+                super.respondOutgoingContent(content)
+            }
         } catch (t: Throwable) {
             val out = responseChannel as? ByteWriteChannel
             out?.close(t)
@@ -48,10 +54,10 @@ internal abstract class NettyApplicationResponse(call: NettyApplicationCall,
         sendResponse(chunked = false, content = ByteReadChannel(bytes))
     }
 
-    override suspend fun responseChannel(): WriteChannel {
+    override suspend fun responseChannel(): ByteWriteChannel {
         val channel = ByteChannel()
         sendResponse(content = channel)
-        return CIOWriteChannelAdapter(channel)
+        return channel
     }
 
     protected abstract fun responseMessage(chunked: Boolean, last: Boolean): Any
@@ -64,9 +70,20 @@ internal abstract class NettyApplicationResponse(call: NettyApplicationCall,
         }
     }
 
-    final fun close() {
-        sendResponse(content = EmptyByteReadChannel) // we don't need to suspendAwait() here as it handled in NettyApplicationCall
-         // while close only does flush() and doesn't terminate connection
+    internal fun ensureResponseSent() {
+        sendResponse(content = EmptyByteReadChannel)
+    }
+
+    internal fun close() {
+        val existingChannel = responseChannel
+        if (existingChannel is ByteWriteChannel) {
+            existingChannel.close(ClosedWriteChannelException("Application response has been closed"))
+            responseChannel = EmptyByteReadChannel
+        }
+
+        ensureResponseSent()
+        // we don't need to suspendAwait() here as it handled in NettyApplicationCall
+        // while close only does flush() and doesn't terminate connection
     }
 
     fun cancel() {

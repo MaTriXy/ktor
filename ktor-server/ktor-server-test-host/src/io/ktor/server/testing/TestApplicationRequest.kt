@@ -7,6 +7,7 @@ import io.ktor.http.*
 import io.ktor.request.*
 import io.ktor.server.engine.*
 import io.ktor.util.*
+import kotlinx.coroutines.experimental.io.*
 import java.io.*
 
 class TestApplicationRequest(
@@ -50,7 +51,7 @@ class TestApplicationRequest(
 
     var multiPartEntries: List<PartData> = emptyList()
 
-    override val queryParameters by lazy { parseQueryString(queryString()) }
+    override val queryParameters by lazy(LazyThreadSafetyMode.NONE) { parseQueryString(queryString()) }
 
     private var headersMap: MutableMap<String, MutableList<String>>? = hashMapOf()
     fun addHeader(name: String, value: String) {
@@ -58,7 +59,7 @@ class TestApplicationRequest(
         map.getOrPut(name, { arrayListOf() }).add(value)
     }
 
-    override val headers by lazy {
+    override val headers by lazy(LazyThreadSafetyMode.NONE) {
         val map = headersMap ?: throw Exception("Headers were already acquired for this request")
         headersMap = null
         valuesOf(map, caseInsensitiveKey = true)
@@ -68,8 +69,10 @@ class TestApplicationRequest(
 
     override fun receiveContent() = TestIncomingContent(this)
 
-    class TestIncomingContent(override val request: TestApplicationRequest) : IncomingContent {
-        override fun readChannel() = request.bodyBytes.toReadChannel()
+    class TestIncomingContent(private val request: TestApplicationRequest) : IncomingContent {
+        override val headers: Headers = request.headers
+
+        override fun readChannel() = ByteReadChannel(request.bodyBytes)
         override fun inputStream(): InputStream = ByteArrayInputStream(request.bodyBytes)
 
         override fun multiPartData(): MultiPartData = object : MultiPartData {

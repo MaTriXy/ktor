@@ -100,6 +100,12 @@ allprojects {
             outputDirectory = "$buildDir/javadoc"
             reportNotDocumented = false
         }
+
+        task dokkaWebsite(type: org.jetbrains.dokka.gradle.DokkaTask) {
+            outputFormat = 'kotlin-website'
+            outputDirectory = "${rootProject.projectDir}/apidoc"
+            reportNotDocumented = false
+        }
     }
 
     task jarTest(type: Jar, dependsOn: testClasses) {
@@ -128,9 +134,7 @@ allprojects {
 
     repositories {
 //        mavenLocal()
-
-        maven { url "http://repo.maven.apache.org/maven2" }
-        maven { url "https://jcenter.bintray.com" }
+        jcenter()
 
         if (kotlin_version.contains("-eap") || kotlin_version.contains("-rc")) {
             if (kotlin_version.startsWith("1.1")) {
@@ -144,11 +148,6 @@ allprojects {
         } else if (kotlin_version.endsWith("-SNAPSHOT")) {
             maven { url 'https://oss.sonatype.org/content/repositories/snapshots' }
         }
-
-        maven { url "https://jitpack.io" }
-        maven { url "https://dl.bintray.com/kotlinx/kotlinx" }
-        maven { url "https://dl.bintray.com/kotlin/kotlinx" }
-        maven { url "https://dl.bintray.com/kotlin/exposed" }
     }
 
     task packageSources(type: Jar) {
@@ -231,8 +230,8 @@ subprojects {
     dependencies {
         compile group: 'org.jetbrains.kotlin', name: 'kotlin-reflect', version: kotlin_version
         compile group: 'org.jetbrains.kotlin', name: 'kotlin-stdlib', version: kotlin_version
-        compile group: 'org.jetbrains.kotlin', name: 'kotlin-stdlib-jre7', version: kotlin_version
-        compile group: 'org.jetbrains.kotlin', name: 'kotlin-stdlib-jre8', version: kotlin_version
+        compile group: 'org.jetbrains.kotlin', name: 'kotlin-stdlib-jdk7', version: kotlin_version
+        compile group: 'org.jetbrains.kotlin', name: 'kotlin-stdlib-jdk8', version: kotlin_version
         compile group: 'org.jetbrains.kotlinx', name: 'kotlinx-coroutines-jdk8', version: coroutines_version
         compile(group: 'org.jetbrains.kotlinx', name: 'kotlinx-coroutines-io', version: coroutines_version) {
             exclude(module: 'kotlin-stdlib')

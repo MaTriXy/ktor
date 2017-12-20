@@ -1,58 +1,73 @@
 package io.ktor.client.request
 
+import io.ktor.client.call.*
+import io.ktor.client.response.*
 import io.ktor.client.utils.*
+import io.ktor.content.*
 import io.ktor.http.*
 import io.ktor.util.*
-import javax.net.ssl.*
+import kotlinx.coroutines.experimental.*
 
 
-class HttpRequest(
-        val url: Url,
-        val method: HttpMethod,
-        override val headers: Headers,
-        val body: Any,
-        var sslContext: SSLContext?,
-        val followRedirects: Boolean // should it be here?
-) : HttpMessage {
-    val cacheControl: HttpRequestCacheControl by lazy { headers.computeRequestCacheControl() } // and this?
+interface HttpRequest : HttpMessage {
+    val call: HttpClientCall
+
+    val method: HttpMethod
+
+    val url: Url
+
+    val attributes: Attributes
+
+    val executionContext: Job
+
+    suspend fun execute(content: OutgoingContent): HttpResponse
 }
 
-class HttpRequestBuilder() : HttpMessageBuilder {
-    val url = UrlBuilder()
+class HttpRequestBuilder : HttpMessageBuilder {
+    val url = URLBuilder()
     var method = HttpMethod.Get
     override val headers = HeadersBuilder(caseInsensitiveKey = true)
-    var body: Any = EmptyBody
-    var sslContext: SSLContext? = null
-    var followRedirects: Boolean = false
-
-    val flags = Attributes()
-    val cacheControl: HttpRequestCacheControl get() = headers.computeRequestCacheControl()
-
-    constructor(data: HttpRequest) : this() {
-        url.takeFrom(data.url)
-        method = data.method
-        headers.appendAll(data.headers)
-        body = data.body
-        sslContext = data.sslContext
-        followRedirects = data.followRedirects
-    }
+    var body: Any = EmptyContent
 
     fun headers(block: HeadersBuilder.() -> Unit) = headers.apply(block)
 
-    fun url(block: UrlBuilder.() -> Unit) = url.block()
+    fun url(block: URLBuilder.(URLBuilder) -> Unit) = url.block(url)
 
-    fun build(): HttpRequest = HttpRequest(url.build(), method, headers.build(), body, sslContext, followRedirects)
+    fun build(): HttpRequestData = HttpRequestData(
+            url.build(), method, headers.build(), body
+    )
 }
+
+class HttpRequestData(
+        val url: Url,
+        val method: HttpMethod,
+        val headers: Headers,
+        val body: Any
+)
 
 fun HttpRequestBuilder.takeFrom(builder: HttpRequestBuilder): HttpRequestBuilder {
     method = builder.method
     body = builder.body
-    sslContext = builder.sslContext
-    followRedirects = builder.followRedirects
     url.takeFrom(builder.url)
     headers.appendAll(builder.headers)
 
     return this
 }
 
-fun HttpRequestBuilder.clone(): HttpRequestBuilder = HttpRequestBuilder().takeFrom(this)
+fun HttpRequestBuilder.url(
+        scheme: String = "http",
+        host: String = "localhost",
+        port: Int = 80,
+        path: String = "/"
+) {
+    url.apply {
+        protocol = URLProtocol.createOrDefault(scheme, port)
+        this.host = host
+        this.port = port
+        encodedPath = path
+    }
+}
+
+fun HttpRequestBuilder.url(data: java.net.URL) {
+    url.takeFrom(data)
+}

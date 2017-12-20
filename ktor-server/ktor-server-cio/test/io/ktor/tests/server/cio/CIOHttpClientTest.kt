@@ -1,10 +1,10 @@
 package io.ktor.tests.server.cio
 
 import io.ktor.client.*
-import io.ktor.client.backend.cio.*
 import io.ktor.client.call.*
+import io.ktor.client.engine.cio.*
 import io.ktor.client.request.*
-import io.ktor.client.utils.*
+import io.ktor.client.response.*
 import io.ktor.http.*
 import kotlinx.coroutines.experimental.*
 import org.junit.Test
@@ -59,17 +59,13 @@ class CIOHttpClientTest {
         }
 
         val port = portSync.take()
-        val response = HttpClient(CIOBackend).call(URL("http://127.0.0.1:$port/")) {
+        val client = HttpClient(CIO)
+        val response = client.call(URL("http://127.0.0.1:$port/")) {
             method = HttpMethod.Post
-            url.path = "/url"
+            url.encodedPath = "/url"
             header("header", "value")
-            header("Content-Length", "12")
-            body = OutputStreamBody { out ->
-                out.writer().use { w ->
-                    w.write("request-body")
-                }
-            }
-        }
+            body = "request-body"
+        }.response
 
         try {
             assertEquals(HttpStatusCode.OK, response.status)
@@ -84,6 +80,7 @@ class CIOHttpClientTest {
             assertEquals("request-body", receivedContentSync.take())
         } finally {
             response.close()
+            client.close()
             th.join()
         }
     }
@@ -149,17 +146,14 @@ class CIOHttpClientTest {
 
         val port = portSync.await()
 
-        val response = HttpClient(CIOBackend).call(URL("http://127.0.0.1:$port/")) {
+        val client = HttpClient(CIO)
+        val response = client.call(URL("http://127.0.0.1:$port/")) {
             method = HttpMethod.Post
-            url.path = "/url"
+            url.encodedPath = "/url"
             header("header", "value")
             header("Transfer-Encoding", "chunked")
-            body = OutputStreamBody { out ->
-                out.writer().use { w ->
-                    w.write("request-body")
-                }
-            }
-        }
+            body = "request-body"
+        }.response
 
         try {
             assertEquals(HttpStatusCode.OK, response.status)
@@ -174,6 +168,7 @@ class CIOHttpClientTest {
             assertEquals("request-body", receivedContentSync.await())
         } finally {
             response.close()
+            client.close()
             th.join()
         }
     }
