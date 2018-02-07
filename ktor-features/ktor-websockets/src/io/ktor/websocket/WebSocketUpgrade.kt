@@ -6,9 +6,8 @@ import io.ktor.content.*
 import io.ktor.http.*
 import io.ktor.request.*
 import io.ktor.util.*
-import kotlinx.coroutines.experimental.io.*
 import kotlinx.coroutines.experimental.*
-import java.io.*
+import kotlinx.coroutines.experimental.io.*
 import java.security.*
 import kotlin.coroutines.experimental.*
 
@@ -22,8 +21,8 @@ import kotlin.coroutines.experimental.*
 class WebSocketUpgrade(val call: ApplicationCall, val protocol: String? = null, val handle: suspend WebSocketSession.(Dispatchers) -> Unit) : OutgoingContent.ProtocolUpgrade() {
     private val key = call.request.header(HttpHeaders.SecWebSocketKey) ?: throw IllegalArgumentException("It should be ${HttpHeaders.SecWebSocketKey} header")
 
-    override val headers: ValuesMap
-        get() = ValuesMap.build(true) {
+    override val headers: Headers
+        get() = Headers.build {
             append(HttpHeaders.Upgrade, "websocket")
             append(HttpHeaders.Connection, "Upgrade")
             append(HttpHeaders.SecWebSocketAccept, encodeBase64(sha1("${key.trim()}258EAFA5-E914-47DA-95CA-C5AB0DC85B11")))

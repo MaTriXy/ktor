@@ -173,11 +173,9 @@ class CompressionTest {
 
             application.routing {
                 get("/small") {
-                    call.response.contentLength(4)
                     call.respondText("0123")
                 }
                 get("/big") {
-                    call.response.contentLength(20)
                     call.respondText("01234567890123456789")
                 }
                 get("/stream") {
@@ -328,29 +326,26 @@ class CompressionTest {
 
     @Test
     fun testWithConditionalHeaders() {
-        val ldt = LocalDateTime.now()
+        val dateTime = LocalDateTime.now()
 
         withTestApplication {
             application.install(ConditionalHeaders)
+            application.install(CachingHeaders)
             application.install(Compression)
 
             application.routing {
                 get("/") {
-                    call.respond(object : Resource, OutgoingContent.ReadChannelContent() {
-                        override val headers by lazy(LazyThreadSafetyMode.NONE) { super<Resource>.headers }
+                    call.respond(object : OutgoingContent.ReadChannelContent() {
+                        init {
+                            versions += LastModifiedVersion(dateTime)
+                            caching = CachingOptions(
+                                    cacheControl = CacheControl.NoCache(CacheControl.Visibility.Public),
+                                    expires = dateTime
+                            )
+                        }
 
-                        override val contentType: ContentType
-                            get() = ContentType.Text.Plain
-
-                        override val versions: List<Version>
-                            get() = listOf(LastModifiedVersion(ldt))
-
-                        override val expires = ldt
-
-                        override val cacheControl = CacheControl.NoCache(CacheControl.Visibility.Public)
-
+                        override val contentType = ContentType.Text.Plain
                         override val contentLength = 4L
-
                         override fun readFrom() = ByteReadChannel("test".toByteArray())
                     })
                 }
@@ -358,35 +353,35 @@ class CompressionTest {
 
             handleAndAssert("/", "gzip", "gzip", "test").let { call ->
                 assertEquals("text/plain", call.response.headers[HttpHeaders.ContentType])
-                assertEquals(ldt.toHttpDateString(), call.response.headers[HttpHeaders.Expires])
+                assertEquals(dateTime.toHttpDateString(), call.response.headers[HttpHeaders.Expires])
                 assertEquals("no-cache, public", call.response.headers[HttpHeaders.CacheControl])
                 assertFalse { HttpHeaders.ContentLength in call.response.headers }
-                assertEquals(ldt.toHttpDateString(), call.response.headers[HttpHeaders.LastModified])
+                assertEquals(dateTime.toHttpDateString(), call.response.headers[HttpHeaders.LastModified])
             }
 
             handleRequest(HttpMethod.Get, "/") {
-                addHeader(HttpHeaders.IfModifiedSince, ldt.toHttpDateString())
+                addHeader(HttpHeaders.IfModifiedSince, dateTime.toHttpDateString())
             }.let { call ->
                 assertEquals(HttpStatusCode.NotModified, call.response.status())
             }
 
             handleRequest(HttpMethod.Get, "/") {
                 addHeader(HttpHeaders.AcceptEncoding, "gzip")
-                addHeader(HttpHeaders.IfModifiedSince, ldt.toHttpDateString())
+                addHeader(HttpHeaders.IfModifiedSince, dateTime.toHttpDateString())
             }.let { call ->
                 assertEquals(HttpStatusCode.NotModified, call.response.status())
             }
 
             handleRequest(HttpMethod.Get, "/") {
                 addHeader(HttpHeaders.AcceptEncoding, "gzip")
-                addHeader(HttpHeaders.IfModifiedSince, ldt.minusHours(1).toHttpDateString())
+                addHeader(HttpHeaders.IfModifiedSince, dateTime.minusHours(1).toHttpDateString())
             }.let { call ->
                 assertEquals(HttpStatusCode.OK, call.response.status())
                 assertEquals("gzip", call.response.headers[HttpHeaders.ContentEncoding])
             }
 
             handleRequest(HttpMethod.Get, "/") {
-                addHeader(HttpHeaders.IfModifiedSince, ldt.minusHours(1).toHttpDateString())
+                addHeader(HttpHeaders.IfModifiedSince, dateTime.minusHours(1).toHttpDateString())
             }.let { call ->
                 assertEquals(HttpStatusCode.OK, call.response.status())
                 assertNull(call.response.headers[HttpHeaders.ContentEncoding])

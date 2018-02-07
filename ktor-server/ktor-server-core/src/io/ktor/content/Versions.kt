@@ -9,6 +9,18 @@ import java.time.*
 import java.util.*
 
 /**
+ * Specifies a key for VersionList extension property for [OutgoingContent]
+ */
+val VersionListProperty = AttributeKey<List<Version>>("VersionList")
+
+/**
+ * Gets or sets list of [Version] instances as an extension property on this content
+ */
+var OutgoingContent.versions: List<Version>
+    get() = getProperty(VersionListProperty) ?: emptyList()
+    set(value) = setProperty(VersionListProperty, value)
+
+/**
  * Represents content version
  *
  * An example of version is [EntityTagVersion] or [LastModifiedVersion]
@@ -22,7 +34,7 @@ interface Version {
     /**
      * Appends relevant headers to the builder
      */
-    fun appendHeadersTo(builder: ValuesMapBuilder)
+    fun appendHeadersTo(builder: HeadersBuilder)
 }
 
 /**
@@ -88,7 +100,7 @@ data class LastModifiedVersion(val lastModified: LocalDateTime) : Version {
     constructor(lastModified: FileTime) : this(LocalDateTime.ofInstant(lastModified.toInstant(), ZoneId.systemDefault()))
     constructor(lastModified: Date) : this(lastModified.toLocalDateTime())
 
-    override fun appendHeadersTo(builder: ValuesMapBuilder) {
+    override fun appendHeadersTo(builder: HeadersBuilder) {
         builder.lastModified(lastModified.atZone(ZoneOffset.UTC))
     }
 }
@@ -123,21 +135,8 @@ data class EntityTagVersion(val etag: String) : Version {
 
     private fun String.parseMatchTag() = split("\\s*,\\s*".toRegex()).map { it.removePrefix("W/") }.filter { it.isNotEmpty() }.toSet()
 
-    override fun appendHeadersTo(builder: ValuesMapBuilder) {
+    override fun appendHeadersTo(builder: HeadersBuilder) {
         builder.etag(etag)
     }
 }
 
-fun OutgoingContent.lastModifiedAndEtagVersions(): List<Version> {
-    if (this is Resource) {
-        return versions
-    }
-
-    val headers = headers
-    val lastModifiedHeaders = headers.getAll(HttpHeaders.LastModified) ?: emptyList()
-    val etagHeaders = headers.getAll(HttpHeaders.ETag) ?: emptyList()
-    val versions = ArrayList<Version>(lastModifiedHeaders.size + etagHeaders.size)
-    lastModifiedHeaders.mapTo(versions) { LastModifiedVersion(LocalDateTime.parse(it, httpDateFormat)) }
-    etagHeaders.mapTo(versions) { EntityTagVersion(it) }
-    return versions
-}

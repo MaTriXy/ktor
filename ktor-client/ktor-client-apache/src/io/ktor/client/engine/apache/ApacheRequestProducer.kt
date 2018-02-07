@@ -95,24 +95,22 @@ class ApacheRequestProducer(
             path = url.encodedPath
 
             if (url.parameters.isEmpty() && url.trailingQuery) setParameters(listOf())
-            url.parameters.flattenEntries().forEach { (key, value) -> addParameter(key, value) }
+            url.parameters.flattenForEach { key, value -> addParameter(key, value) }
         }.build()
 
-        headers.flattenEntries().forEach { (key, value) ->
-            if (HttpHeaders.CONTENT_LENGTH == key) return@forEach
+        headers.flattenForEach { key, value ->
+            if (HttpHeaders.CONTENT_LENGTH == key) return@flattenForEach
             builder.addHeader(key, value)
         }
 
-        this@ApacheRequestProducer.body.headers.flattenEntries().forEach { (key, value) ->
-            if (HttpHeaders.CONTENT_LENGTH == key) return@forEach
+        val content = this@ApacheRequestProducer.body
+        content.headers.flattenForEach { key, value ->
+            if (HttpHeaders.CONTENT_LENGTH == key) return@flattenForEach
             builder.addHeader(key, value)
         }
 
-        val length = this@ApacheRequestProducer.body.headers[HttpHeaders.CONTENT_LENGTH]
-                ?: headers[HttpHeaders.CONTENT_LENGTH]
-
-        val type = this@ApacheRequestProducer.body.headers[HttpHeaders.CONTENT_TYPE]
-                ?: headers[HttpHeaders.CONTENT_TYPE]
+        val length = headers[io.ktor.http.HttpHeaders.ContentLength] ?: content.contentLength?.toString()
+        val type = headers[io.ktor.http.HttpHeaders.ContentType] ?: content.contentType?.toString()
 
         if (body !is OutgoingContent.NoContent && body !is OutgoingContent.ProtocolUpgrade) {
             builder.entity = BasicHttpEntity().apply {

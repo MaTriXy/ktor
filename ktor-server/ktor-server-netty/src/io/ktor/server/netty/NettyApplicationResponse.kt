@@ -1,6 +1,5 @@
 package io.ktor.server.netty
 
-import io.ktor.cio.*
 import io.ktor.content.*
 import io.ktor.http.*
 import io.ktor.http.HttpHeaders
@@ -30,39 +29,40 @@ internal abstract class NettyApplicationResponse(call: NettyApplicationCall,
         }
     }
 
-    suspend override fun respondOutgoingContent(content: OutgoingContent) {
+    override suspend fun respondOutgoingContent(content: OutgoingContent) {
         try {
-            if (content is OutgoingContent.NoContent && HttpHeaders.ContentLength in content.headers) {
-                commitHeaders(content)
-                sendResponse(false, EmptyByteReadChannel)
-            } else {
-                super.respondOutgoingContent(content)
-            }
+            super.respondOutgoingContent(content)
         } catch (t: Throwable) {
             val out = responseChannel as? ByteWriteChannel
             out?.close(t)
             throw t
         } finally {
             val out = responseChannel as? ByteWriteChannel
-            if (out != null) out.close()
+            out?.close()
         }
     }
 
-    suspend override fun respondFromBytes(bytes: ByteArray) {
+    override suspend fun respondFromBytes(bytes: ByteArray) {
         // Note that it shouldn't set HttpHeaders.ContentLength even if we know it here,
         // because it should've been set by commitHeaders earlier
-        sendResponse(chunked = false, content = ByteReadChannel(bytes))
+        val chunked = headers[HttpHeaders.TransferEncoding] == "chunked"
+        sendResponse(chunked, content = ByteReadChannel(bytes))
     }
 
     override suspend fun responseChannel(): ByteWriteChannel {
         val channel = ByteChannel()
-        sendResponse(content = channel)
+        val chunked = headers[HttpHeaders.TransferEncoding] == "chunked"
+        sendResponse(chunked, content = channel)
         return channel
+    }
+
+    override suspend fun respondNoContent(content: OutgoingContent.NoContent) {
+        sendResponse(false, EmptyByteReadChannel)
     }
 
     protected abstract fun responseMessage(chunked: Boolean, last: Boolean): Any
 
-    protected final fun sendResponse(chunked: Boolean = true, content: ByteReadChannel) {
+    protected fun sendResponse(chunked: Boolean = true, content: ByteReadChannel) {
         if (!responseMessageSent) {
             responseChannel = content
             responseMessage.complete(responseMessage(chunked, content.isClosedForRead))

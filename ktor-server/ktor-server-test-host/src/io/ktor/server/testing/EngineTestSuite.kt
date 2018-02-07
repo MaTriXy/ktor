@@ -2,6 +2,7 @@ package io.ktor.server.testing
 
 import io.ktor.application.*
 import io.ktor.cio.*
+import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.client.response.*
 import io.ktor.content.*
@@ -43,7 +44,7 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
         withUrl("/") {
             assertEquals(200, status.value)
 
-            val fields = ValuesMapBuilder(true)
+            val fields = HeadersBuilder()
             fields.appendAll(headers)
 
             fields.remove(HttpHeaders.Date) // Do not check for Date field since it's unstable
@@ -154,9 +155,9 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
     fun testRequestContentFormData() {
         createAndStartServer {
             handle {
-                val valuesMap = call.receiveOrNull<ValuesMap>()
-                if (valuesMap != null)
-                    call.respond(valuesMap.formUrlEncode())
+                val parameters = call.receiveOrNull<Parameters>()
+                if (parameters != null)
+                    call.respond(parameters.formUrlEncode())
                 else
                     call.respond(HttpStatusCode.UnsupportedMediaType)
             }
@@ -165,7 +166,7 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
         withUrl("/", {
             method = HttpMethod.Post
             header(HttpHeaders.ContentType, ContentType.Application.FormUrlEncoded.toString())
-            body = valuesOf("a" to listOf("1")).formUrlEncode()
+            body = parametersOf("a", "1").formUrlEncode()
         }) {
             assertEquals(200, status.value)
             assertEquals("a=1", readText())
@@ -220,7 +221,6 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
             assertEquals(HttpStatusCode.MovedPermanently.value, status.value)
         }
     }
-
 
     @Test
     fun testRedirectFromInterceptor() {
@@ -393,7 +393,7 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
         testLog.trace("test file is $file")
 
         createAndStartServer {
-            application.install(PartialContentSupport)
+            application.install(PartialContent)
             handle {
                 call.respond(LocalFileContent(file))
             }
@@ -420,7 +420,7 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
 
         createAndStartServer {
             application.install(Compression)
-            application.install(PartialContentSupport)
+            application.install(PartialContent)
 
             handle {
                 call.respond(LocalFileContent(file))
@@ -552,7 +552,6 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
                 handle {
                     val response = call.receiveChannel().toByteArray()
                     call.respond(object : OutgoingContent.ReadChannelContent() {
-                        override val headers: ValuesMap get() = ValuesMap.Empty
                         override fun readFrom() = ByteReadChannel(response)
                     })
                 }
@@ -753,19 +752,15 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
     fun testRepeatRequest() {
         createAndStartServer {
             get("/") {
-                println("Got call ${call.request.queryParameters["i"]}")
                 call.respond("OK ${call.request.queryParameters["i"]}")
-                println("Completed call ${call.request.queryParameters["i"]}")
             }
         }
 
         for (i in 1..100) {
-            println("Before $i")
             withUrl("/?i=$i") {
                 assertEquals(200, status.value)
                 assertEquals("OK $i", readText())
             }
-            println("After $i")
         }
     }
 
@@ -978,7 +973,7 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
                             val firstByte = reader.read()
                             if (firstByte == -1) {
                                 //println("Premature end of response stream at iteration $i")
-                                fail("Premature end of response stream at iteration $i")
+                                kotlin.test.fail("Premature end of response stream at iteration $i")
                             } else {
                                 assertEquals('O', firstByte.toChar())
                                 Thread.sleep(random.nextInt(1000).toLong())
@@ -1079,7 +1074,7 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
             get("/file") {
                 try {
                     call.respond(object : OutgoingContent.WriteChannelContent() {
-                        suspend override fun writeTo(channel: ByteWriteChannel) {
+                        override suspend fun writeTo(channel: ByteWriteChannel) {
                             val bb = ByteBuffer.allocate(100)
                             for (i in 1L..1000L) {
                                 delay(100)
@@ -1210,13 +1205,13 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
         createAndStartServer {
             get("/up") {
                 call.respond(object : OutgoingContent.ProtocolUpgrade() {
-                    override val headers: ValuesMap
-                        get() = ValuesMap.build(true) {
+                    override val headers: Headers
+                        get() = Headers.build {
                             append(HttpHeaders.Upgrade, "up")
                             append(HttpHeaders.Connection, "Upgrade")
                         }
 
-                    suspend override fun upgrade(input: ByteReadChannel, output: ByteWriteChannel, engineContext: CoroutineContext, userContext: CoroutineContext): Job {
+                    override suspend fun upgrade(input: ByteReadChannel, output: ByteWriteChannel, engineContext: CoroutineContext, userContext: CoroutineContext): Job {
                         return launch(engineContext) {
                             val bb = ByteBuffer.allocate(8)
                             input.readFully(bb)
@@ -1291,6 +1286,181 @@ abstract class EngineTestSuite<TEngine : ApplicationEngine, TConfiguration : App
                 assertEquals(0x1122334455667788L, ch.readLong())
 
                 assertEquals(-1, ch.readAvailable(ByteArray(1)))
+            }
+        }
+    }
+
+    @Test
+    @NoHttp2
+    open fun testChunked() {
+        val data = ByteArray(16 * 1024, { it.toByte() })
+        val size = data.size.toLong()
+
+        createAndStartServer {
+            get("/chunked") {
+                call.respond(object : OutgoingContent.WriteChannelContent() {
+                    override suspend fun writeTo(channel: ByteWriteChannel) {
+                        channel.writeFully(data)
+                        channel.close()
+                    }
+                })
+            }
+            get("/pseudo-chunked") {
+                call.respond(object : OutgoingContent.WriteChannelContent() {
+                    override val contentLength: Long? get() = size
+                    override suspend fun writeTo(channel: ByteWriteChannel) {
+                        channel.writeFully(data)
+                        channel.close()
+                    }
+                })
+            }
+            get("/array") {
+                call.respond(object : OutgoingContent.ByteArrayContent() {
+                    override val contentLength: Long? get() = size
+                    override fun bytes(): ByteArray = data
+                })
+            }
+            get("/array-chunked") {
+                call.respond(object : OutgoingContent.ByteArrayContent() {
+                    override fun bytes(): ByteArray = data
+                })
+            }
+            get("/read-channel") {
+                call.respond(object : OutgoingContent.ReadChannelContent() {
+                    override fun readFrom(): ByteReadChannel = ByteReadChannel(data)
+                })
+            }
+            get("/fixed-read-channel") {
+                call.respond(object : OutgoingContent.ReadChannelContent() {
+                    override val contentLength: Long? get() = size
+                    override fun readFrom(): ByteReadChannel = ByteReadChannel(data)
+                })
+            }
+        }
+
+        withUrl("/array") {
+            assertEquals(size, headers[HttpHeaders.ContentLength]?.toLong())
+            assertNotEquals("chunked", headers[HttpHeaders.TransferEncoding])
+            org.junit.Assert.assertArrayEquals(data, call.response.readBytes())
+        }
+
+        withUrl("/array-chunked") {
+            assertEquals("chunked", headers[HttpHeaders.TransferEncoding])
+            org.junit.Assert.assertArrayEquals(data, call.response.readBytes())
+            assertNull(headers[HttpHeaders.ContentLength])
+        }
+
+        withUrl("/chunked") {
+            assertEquals("chunked", headers[HttpHeaders.TransferEncoding])
+            org.junit.Assert.assertArrayEquals(data, call.response.readBytes())
+            assertNull(headers[HttpHeaders.ContentLength])
+        }
+
+        withUrl("/fixed-read-channel") {
+            assertNotEquals("chunked", headers[HttpHeaders.TransferEncoding])
+            assertEquals(size, headers[HttpHeaders.ContentLength]?.toLong())
+            org.junit.Assert.assertArrayEquals(data, call.response.readBytes())
+        }
+
+        withUrl("/pseudo-chunked") {
+            assertNotEquals("chunked", headers[HttpHeaders.TransferEncoding])
+            assertEquals(size, headers[HttpHeaders.ContentLength]?.toLong())
+            org.junit.Assert.assertArrayEquals(data, call.response.readBytes())
+        }
+
+        withUrl("/read-channel") {
+            assertNull(headers[HttpHeaders.ContentLength])
+            assertEquals("chunked", headers[HttpHeaders.TransferEncoding])
+            org.junit.Assert.assertArrayEquals(data, call.response.readBytes())
+        }
+    }
+
+    @Test
+    @NoHttp2
+    @Ignore
+    open fun testChunkedWrongLength() {
+        val data = ByteArray(16 * 1024, { it.toByte() })
+        val doubleSize = (data.size * 2).toString()
+        val halfSize = (data.size / 2).toString()
+
+        createAndStartServer {
+            get("/read-less") {
+                assertFailsSuspend {
+                    call.respond(object : OutgoingContent.ReadChannelContent() {
+                        override val headers: Headers
+                            get() = Headers.build {
+                                append(HttpHeaders.ContentLength, doubleSize)
+                            }
+
+                        override fun readFrom(): ByteReadChannel = ByteReadChannel(data)
+                    })
+                }
+            }
+            get("/read-more") {
+                assertFailsSuspend {
+                    call.respond(object : OutgoingContent.ReadChannelContent() {
+                        override val headers: Headers
+                            get() = Headers.build {
+                                append(HttpHeaders.ContentLength, halfSize)
+                            }
+
+                        override fun readFrom(): ByteReadChannel = ByteReadChannel(data)
+                    })
+                }
+            }
+            get("/write-less") {
+                assertFailsSuspend {
+                    call.respond(object : OutgoingContent.WriteChannelContent() {
+                        override val headers: Headers
+                            get() = Headers.build {
+                                append(HttpHeaders.ContentLength, doubleSize)
+                            }
+
+                        suspend override fun writeTo(channel: ByteWriteChannel) {
+                            channel.writeFully(data)
+                            channel.close()
+                        }
+                    })
+                }
+            }
+            get("/write-more") {
+                assertFailsSuspend {
+                    call.respond(object : OutgoingContent.WriteChannelContent() {
+                        override val headers: Headers
+                            get() = Headers.build {
+                                append(HttpHeaders.ContentLength, halfSize)
+                            }
+
+                        suspend override fun writeTo(channel: ByteWriteChannel) {
+                            channel.writeFully(data)
+                            channel.close()
+                        }
+                    })
+                }
+            }
+        }
+
+        assertFails {
+            withUrl("/read-more") {
+                call.receive<String>()
+            }
+        }
+
+        assertFails {
+            withUrl("/write-more") {
+                call.receive<String>()
+            }
+        }
+
+        assertFails {
+            withUrl("/read-less") {
+                call.receive<String>()
+            }
+        }
+
+        assertFails {
+            withUrl("/write-less") {
+                call.receive<String>()
             }
         }
     }

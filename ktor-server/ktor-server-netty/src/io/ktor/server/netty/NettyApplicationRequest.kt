@@ -1,7 +1,7 @@
 package io.ktor.server.netty
 
 import io.ktor.application.*
-import io.ktor.cio.*
+import io.ktor.http.*
 import io.ktor.request.*
 import io.ktor.server.engine.*
 import io.ktor.util.*
@@ -19,7 +19,7 @@ internal abstract class NettyApplicationRequest(
         protected val uri: String,
         internal val keepAlive: Boolean) : BaseApplicationRequest(call) {
 
-    final override val queryParameters = object : ValuesMap {
+    final override val queryParameters = object : Parameters {
         private val decoder = QueryStringDecoder(uri)
         override val caseInsensitiveName: Boolean get() = true
         override fun getAll(name: String) = decoder.parameters()[name]
@@ -43,7 +43,7 @@ internal abstract class NettyApplicationRequest(
 
     protected abstract fun newDecoder(): HttpPostMultipartRequestDecoder
 
-    final fun close() {
+    fun close() {
         if (contentMultipart.isInitialized()) {
             contentMultipart.value.destroy()
         }

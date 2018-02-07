@@ -6,7 +6,6 @@ import io.ktor.http.*
 import io.ktor.request.*
 import io.ktor.response.*
 import io.ktor.server.engine.*
-import io.ktor.util.*
 import kotlinx.coroutines.experimental.*
 import kotlinx.coroutines.experimental.io.*
 import java.time.*
@@ -33,17 +32,16 @@ class TestApplicationResponse(call: TestApplicationCall) : BaseApplicationRespon
     override fun setStatus(statusCode: HttpStatusCode) {}
 
     override val headers: ResponseHeaders = object : ResponseHeaders() {
-        private val headersMap = ValuesMapBuilder(true)
-        private val headers: ValuesMap by lazy { headersMap.build() }
+        private val builder = HeadersBuilder()
 
         override fun engineAppendHeader(name: String, value: String) {
             if (closed)
                 throw UnsupportedOperationException("Headers can no longer be set because response was already completed")
-            headersMap.append(name, value)
+            builder.append(name, value)
         }
 
-        override fun getEngineHeaderNames(): List<String> = headers.names().toList()
-        override fun getEngineHeaderValues(name: String): List<String> = headers.getAll(name).orEmpty()
+        override fun getEngineHeaderNames(): List<String> = builder.names().toList()
+        override fun getEngineHeaderValues(name: String): List<String> = builder.getAll(name).orEmpty()
     }
 
     init {
@@ -53,7 +51,7 @@ class TestApplicationResponse(call: TestApplicationCall) : BaseApplicationRespon
         }
     }
 
-    suspend override fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
+    override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
         val job = upgrade.upgrade(call.receiveChannel(), realContent.value, CommonPool, Unconfined)
         val registration = job.attachChild(webSocketCompleted)
         webSocketCompleted.invokeOnCompletion {

@@ -8,7 +8,12 @@ fun URLBuilder.takeFrom(uri: URI) {
     port = uri.port.takeIf { it > 0 } ?: if (uri.scheme == "https") 443 else 80
     protocol = URLProtocol.createOrDefault(uri.scheme, port)
     host = uri.host
-    encodedPath = uri.path ?: "/"
+    val path = uri.path
+    encodedPath = when (path) {
+        null -> "/"
+        "" -> "/"
+        else -> path
+    }
     uri.query?.let { parameters.appendAll(parseQueryString(it)) }
     if (uri.query?.isEmpty() == true) {
         trailingQuery = true
@@ -40,7 +45,8 @@ val Url.fullPath: String
             !parameters.isEmpty() -> "?${decodeURLPart(parameters.formUrlEncode())}"
             else -> ""
         }
-        return "$encodedPath$parameters"
+        val result = "$encodedPath$parameters"
+        return if (result.isEmpty()) "/" else result
     }
 
 val Url.hostWithPort: String get() = "$host:$port"

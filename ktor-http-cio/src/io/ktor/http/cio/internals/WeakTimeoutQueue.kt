@@ -23,7 +23,9 @@ class WeakTimeoutQueue(private val timeoutMillis: Long,
                        private val clock: Clock = Clock.systemUTC(),
                        private val exceptionFactory: () -> Exception = { TimeoutCancellationException("Timeout of $timeoutMillis ms exceeded") }) {
     private val head = LockFreeLinkedListHead()
-    private @Volatile var cancelled = false
+
+    @Volatile
+    private var cancelled = false
 
     fun register(r: Job) : DisposableHandle {
         val now = clock.millis()
@@ -64,7 +66,7 @@ class WeakTimeoutQueue(private val timeoutMillis: Long,
                 if (wrapped.isCancelled) throw wrapped.getCancellationException()
                 block.startCoroutineUninterceptedOrReturn(receiver = wrapped, completion = wrapped)
             } catch (t: Throwable) {
-                JobSupport.CompletedExceptionally(t)
+                CompletedExceptionally(t)
             }
 
             unwrapResult(wrapped, handle, result)
@@ -76,7 +78,7 @@ class WeakTimeoutQueue(private val timeoutMillis: Long,
         return when {
             result === suspended -> result
             c.isCompleted -> suspended
-            result is JobSupport.CompletedExceptionally -> {
+            result is CompletedExceptionally -> {
                 handle.dispose()
                 throw result.exception
             }
@@ -123,15 +125,13 @@ class WeakTimeoutQueue(private val timeoutMillis: Long,
         }
     }
 
-    private class WeakTimeoutCoroutine<T>(context: CoroutineContext, val delegate: Continuation<T>) : AbstractCoroutine<T>(context, true), Continuation<T> {
-        override fun afterCompletion(state: Any?, mode: Int) {
-            if (state is CompletedExceptionally) {
-                delegate.resumeWithExceptionMode(state.exception, mode)
-            } else {
-                @Suppress("UNCHECKED_CAST")
-                delegate.resumeMode(state as T, mode)
-            }
+    private class WeakTimeoutCoroutine<in T>(context: CoroutineContext, val delegate: Continuation<T>) : AbstractCoroutine<T>(context, true), Continuation<T> {
+        override fun onCompleted(value: T) {
+            delegate.resume(value)
+        }
+
+        override fun onCompletedExceptionally(exception: Throwable) {
+            delegate.resumeWithException(exception)
         }
     }
-
 }

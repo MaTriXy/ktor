@@ -6,9 +6,9 @@ import io.ktor.util.*
 import kotlinx.coroutines.experimental.io.*
 import java.io.*
 
-class WriterContent(private val body: suspend Writer.() -> Unit, private val contentType: ContentType, override val status: HttpStatusCode? = null) : OutgoingContent.WriteChannelContent() {
-    override val headers: ValuesMap
-        get() = ValuesMap.build(true) { contentType(contentType) }
+class WriterContent(private val body: suspend Writer.() -> Unit,
+                    override val contentType: ContentType,
+                    override val status: HttpStatusCode? = null) : OutgoingContent.WriteChannelContent() {
 
     override suspend fun writeTo(channel: ByteWriteChannel) {
         val charset = contentType.charset() ?: Charsets.UTF_8

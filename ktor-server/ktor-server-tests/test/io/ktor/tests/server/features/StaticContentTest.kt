@@ -91,7 +91,8 @@ class StaticContentTest {
 
     @Test
     fun testStaticContent() = withTestApplication {
-        application.install(PartialContentSupport)
+        application.install(ConditionalHeaders)
+        application.install(PartialContent)
         application.install(AutoHeadResponse)
 
         application.routing {
@@ -247,7 +248,7 @@ private fun TestApplicationEngine.handleAndAwait(method: HttpMethod, uri: String
     return handleRequest(method, uri, setup).also { it.awaitCompletion() }
 }
 
-private inline suspend fun <reified T> assertFailsWithSuspended(noinline block: suspend () -> Unit): T {
+private suspend inline fun <reified T> assertFailsWithSuspended(noinline block: suspend () -> Unit): T {
     val exceptionClass = T::class.java
     try {
         block()

@@ -13,7 +13,10 @@ import java.nio.file.*
  *
  * @return [LocalFileContent] or [JarFileContent] or `null`
  */
-fun ApplicationCall.resolveResource(path: String, resourcePackage: String? = null, classLoader: ClassLoader = application.environment.classLoader, mimeResolve: (String) -> ContentType = { ContentType.defaultForFileExtension(it) }): Resource? {
+fun ApplicationCall.resolveResource(path: String,
+                                    resourcePackage: String? = null,
+                                    classLoader: ClassLoader = application.environment.classLoader,
+                                    mimeResolve: (String) -> ContentType = { ContentType.defaultForFileExtension(it) }): OutgoingContent? {
     val packagePath = (resourcePackage?.replace('.', '/') ?: "").appendPathPart(path)
     val normalizedPath = Paths.get(packagePath).normalizeAndRelativize()
     val normalizedResource = normalizedPath.toString().replace(File.separatorChar, '/')
@@ -26,7 +29,7 @@ fun ApplicationCall.resolveResource(path: String, resourcePackage: String? = nul
             return if (file.exists()) LocalFileContent(file, mimeResolve(file.extension)) else null
         } else if (url.protocol == "jar") {
             val zipFile = findContainingJarFile(url.toString())
-            return JarFileContent(zipFile, normalizedResource, classLoader, mimeResolve(url.path.extension()))
+            return JarFileContent(zipFile, normalizedResource, mimeResolve(url.path.extension()))
         }
     }
 

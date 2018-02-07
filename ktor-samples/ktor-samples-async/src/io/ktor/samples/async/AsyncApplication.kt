@@ -5,7 +5,6 @@ import kotlinx.html.*
 import io.ktor.application.*
 import io.ktor.features.*
 import io.ktor.html.*
-import io.ktor.pipeline.*
 import io.ktor.routing.*
 import java.util.*
 
@@ -19,7 +18,7 @@ fun Application.main() {
         // Like localhost:8080/1, localhost:8080/2, localhost:8080/3, etc
         get("/{...}") {
             val start = System.currentTimeMillis()
-            run(CommonPool) {
+            withContext(CommonPool) {
                 call.handleLongCalculation(start)
             }
         }

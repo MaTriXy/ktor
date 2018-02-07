@@ -14,7 +14,7 @@ import kotlinx.coroutines.experimental.*
 import org.json.simple.*
 import java.io.*
 
-suspend internal fun PipelineContext<Unit, ApplicationCall>.oauth2(
+internal suspend fun PipelineContext<Unit, ApplicationCall>.oauth2(
         client: HttpClient, dispatcher: CoroutineDispatcher,
         providerLookup: ApplicationCall.() -> OAuthServerSettings?,
         urlProvider: ApplicationCall.(OAuthServerSettings) -> String
@@ -26,7 +26,7 @@ suspend internal fun PipelineContext<Unit, ApplicationCall>.oauth2(
         if (token == null) {
             call.redirectAuthenticateOAuth2(provider, callbackRedirectUrl, nextNonce(), scopes = provider.defaultScopes)
         } else {
-            run(dispatcher) {
+            withContext(dispatcher) {
                 val accessToken = simpleOAuth2Step2(client, provider, callbackRedirectUrl, token)
                 call.authentication.principal(accessToken)
             }
@@ -44,7 +44,7 @@ internal fun ApplicationCall.oauth2HandleCallback(): OAuthCallback.TokenSingle? 
     }
 }
 
-suspend internal fun ApplicationCall.redirectAuthenticateOAuth2(settings: OAuthServerSettings.OAuth2ServerSettings, callbackRedirectUrl: String, state: String, extraParameters: List<Pair<String, String>> = emptyList(), scopes: List<String> = emptyList()) {
+internal suspend fun ApplicationCall.redirectAuthenticateOAuth2(settings: OAuthServerSettings.OAuth2ServerSettings, callbackRedirectUrl: String, state: String, extraParameters: List<Pair<String, String>> = emptyList(), scopes: List<String> = emptyList()) {
     redirectAuthenticateOAuth2(authenticateUrl = settings.authorizeUrl,
             callbackRedirectUrl = callbackRedirectUrl,
             clientId = settings.clientId,
@@ -108,7 +108,7 @@ private suspend fun simpleOAuth2Step2(client: HttpClient,
                     OAuth2RequestParameters.State to state,
                     OAuth2RequestParameters.Code to code,
                     OAuth2RequestParameters.RedirectUri to usedRedirectUrl
-            ).filterNotNull() + extraParameters.toList()).formUrlEncode()
+            ) + extraParameters.toList()).formUrlEncode()
 
     val getUri = when (method) {
         HttpMethod.Get -> baseUrl.appendUrlParameters(urlParameters)
@@ -165,9 +165,9 @@ private suspend fun simpleOAuth2Step2(client: HttpClient,
     )
 }
 
-private fun decodeContent(content: String, contentType: ContentType): ValuesMap = when {
+private fun decodeContent(content: String, contentType: ContentType): Parameters = when {
     contentType.match(ContentType.Application.FormUrlEncoded) -> content.parseUrlEncodedParameters()
-    contentType.match(ContentType.Application.Json) -> ValuesMap.build {
+    contentType.match(ContentType.Application.Json) -> Parameters.build {
         (JSONValue.parseWithException(content) as JSONObject).forEach {
             append(it.key.toString(), it.value.toString())
         }

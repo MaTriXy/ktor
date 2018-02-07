@@ -78,7 +78,7 @@ fun Application.main() {
     install(Compression)
     install(CallLogging)
     install(ConditionalHeaders)
-    install(PartialContentSupport)
+    install(PartialContent)
     install(AutoHeadResponse)
     install(ContentNegotiation) {
         register(ContentType.Application.Json, GsonConverter())
@@ -360,7 +360,7 @@ fun Route.handleRequestWithBodyFor(method: HttpMethod): Unit {
             handle {
                 val listFiles = call.receive<MultiPartData>().readAllParts().filterIsInstance<PartData.FileItem>()
                 call.sendHttpBinResponse {
-                    form = call.receive<ValuesMap>()
+                    form = call.receive<Parameters>()
                     files = listFiles.associateBy { part -> part.partName ?: "a" }
                 }
             }
@@ -370,7 +370,7 @@ fun Route.handleRequestWithBodyFor(method: HttpMethod): Unit {
         method(method) {
             handle {
                 call.sendHttpBinResponse {
-                    form = call.receive<ValuesMap>()
+                    form = call.receive<Parameters>()
                 }
             }
         }

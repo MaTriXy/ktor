@@ -36,7 +36,7 @@ internal class NettyChannelInitializer(private val enginePipeline: EnginePipelin
 
             @Suppress("UNCHECKED_CAST")
             val chain1 = connector.keyStore.getCertificateChain(connector.keyAlias).toList() as List<X509Certificate>
-            val certs = chain1.toList().toTypedArray<X509Certificate>()
+            val certs = chain1.toList().toTypedArray()
             val password = connector.privateKeyPassword()
             val pk = connector.keyStore.getKey(connector.keyAlias, password) as PrivateKey
             password.fill('\u0000')
@@ -76,21 +76,14 @@ internal class NettyChannelInitializer(private val enginePipeline: EnginePipelin
     }
 
     fun configurePipeline(pipeline: ChannelPipeline, protocol: String) {
-        val requestQueue = NettyRequestQueue(requestQueueLimit)
 
         when (protocol) {
             ApplicationProtocolNames.HTTP_2 -> {
-                val connection = DefaultHttp2Connection(true)
-                val writer = DefaultHttp2FrameWriter()
-                val reader = DefaultHttp2FrameReader(false)
-
-                val encoder = DefaultHttp2ConnectionEncoder(connection, writer)
-                val decoder = DefaultHttp2ConnectionDecoder(connection, encoder, reader)
-
-                pipeline.addLast(NettyHttp2ConnectionHandler(encoder, decoder, Http2Settings()))
-                pipeline.addLast(Multiplexer(pipeline.channel(), NettyHttp2Handler(enginePipeline, environment.application, callEventGroup, userContext, connection, requestQueue)))
+                val handler = NettyHttp2Handler(enginePipeline, environment.application, callEventGroup, userContext)
+                pipeline.addLast(Http2MultiplexCodecBuilder.forServer(handler).build())
             }
             ApplicationProtocolNames.HTTP_1_1 -> {
+                val requestQueue = NettyRequestQueue(requestQueueLimit)
                 val handler = NettyHttp1Handler(enginePipeline, environment, callEventGroup, engineContext, userContext, requestQueue)
 
                 with(pipeline) {

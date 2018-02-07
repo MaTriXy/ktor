@@ -11,6 +11,18 @@ import kotlin.coroutines.experimental.*
  */
 sealed class OutgoingContent {
     /**
+     * Specifies [ContentType] for this resource.
+     */
+    open val contentType: ContentType? get() = null
+
+    /**
+     * Specifies content length in bytes for this resource.
+     *
+     * If null, the resources will be sent as `Transfer-Encoding: chunked`
+     */
+    open val contentLength: Long? get() = null
+
+    /**
      * Status code to set when sending this content
      */
     open val status: HttpStatusCode?
@@ -19,8 +31,26 @@ sealed class OutgoingContent {
     /**
      * Headers to set when sending this content
      */
-    open val headers: ValuesMap
-        get() = ValuesMap.Empty
+    open val headers: Headers
+        get() = Headers.Empty
+
+    private var extensionProperties: Attributes? = null
+
+    /**
+     * Gets an extension property for this content
+     */
+    open fun <T : Any> getProperty(key: AttributeKey<T>): T? = extensionProperties?.getOrNull(key)
+
+    /**
+     * Sets an extension property for this content
+     */
+    open fun <T : Any> setProperty(key: AttributeKey<T>, value: T?) {
+        when {
+            value == null && extensionProperties == null -> return
+            value == null -> extensionProperties?.remove(key)
+            else -> (extensionProperties ?: Attributes()).also { extensionProperties = it }.put(key, value)
+        }
+    }
 
     /**
      * Variant of a [OutgoingContent] without a payload

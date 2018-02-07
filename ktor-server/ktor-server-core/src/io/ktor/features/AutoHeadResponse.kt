@@ -31,8 +31,12 @@ object AutoHeadResponse : ApplicationFeature<ApplicationCallPipeline, Unit, Unit
         }
     }
 
-    private class HeadResponse(val delegate: OutgoingContent) : OutgoingContent.NoContent() {
-        override val headers by lazy(LazyThreadSafetyMode.NONE) { delegate.headers }
-        override val status: HttpStatusCode? get() = delegate.status
+    private class HeadResponse(val original: OutgoingContent) : OutgoingContent.NoContent() {
+        override val status: HttpStatusCode? get() = original.status
+        override val contentType: ContentType? get() = original.contentType
+        override val contentLength: Long? get() = original.contentLength
+        override fun <T : Any> getProperty(key: AttributeKey<T>) = original.getProperty(key)
+        override fun <T : Any> setProperty(key: AttributeKey<T>, value: T?) = original.setProperty(key, value)
+        override val headers get() = original.headers
     }
 }

@@ -26,9 +26,9 @@ class ApacheHttpRequest(
     override val url: Url = requestData.url
     override val headers: Headers = requestData.headers
 
-    override val executionContext: CompletableDeferred<Unit> = CompletableDeferred()
+    override val executionContext: CompletableDeferred<Unit> = requestData.executionContext
 
-    suspend override fun execute(content: OutgoingContent): HttpResponse {
+    override suspend fun execute(content: OutgoingContent): HttpResponse {
         val request = ApacheRequestProducer(requestData, config, content, dispatcher, executionContext)
         return engine.sendRequest(call, request, dispatcher)
     }
@@ -64,5 +64,10 @@ private suspend fun CloseableHttpAsyncClient.sendRequest(
         }
     }
 
-    execute(request, consumer, callback)
+    val future = execute(request, consumer, callback)
+    continuation.invokeOnCompletion(onCancelling = true) { cause ->
+        cause ?: return@invokeOnCompletion
+        future.cancel(true)
+        parent.cancel(cause)
+    }
 }

@@ -5,7 +5,6 @@ import io.ktor.content.*
 import io.ktor.http.*
 import io.ktor.request.*
 import io.ktor.server.testing.*
-import io.ktor.util.*
 import org.junit.Test
 import kotlin.test.*
 
@@ -48,8 +47,9 @@ class TestEngineMultipartTest {
                     PartData.FormItem(
                             "plain field",
                             dispose = {},
-                            partHeaders = valuesOf(
-                                    HttpHeaders.ContentDisposition to listOf(ContentDisposition.File.withParameter(ContentDisposition.Parameters.Name, "field1").toString())
+                            partHeaders = headersOf(
+                                    HttpHeaders.ContentDisposition,
+                                    ContentDisposition.File.withParameter(ContentDisposition.Parameters.Name, "field1").toString()
                             )
                     )
             )
@@ -78,13 +78,12 @@ class TestEngineMultipartTest {
                     PartData.FileItem(
                             streamProvider = { "file content".toByteArray().inputStream() },
                             dispose = {},
-                            partHeaders = valuesOf(
-                                    HttpHeaders.ContentDisposition to listOf(
-                                            ContentDisposition.File
-                                                    .withParameter(ContentDisposition.Parameters.Name, "fileField")
-                                                    .withParameter(ContentDisposition.Parameters.FileName, "file.txt")
-                                                    .toString()
-                                    )
+                            partHeaders = headersOf(
+                                    HttpHeaders.ContentDisposition,
+                                    ContentDisposition.File
+                                            .withParameter(ContentDisposition.Parameters.Name, "fileField")
+                                            .withParameter(ContentDisposition.Parameters.FileName, "file.txt")
+                                            .toString()
                             )
                     )
             )

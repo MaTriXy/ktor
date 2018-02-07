@@ -17,6 +17,7 @@ internal fun attachForReadingImpl(channel: ByteChannel, nioChannel: ReadableByte
                     channel.close()
                     break
                 } else if (rc == 0) {
+                    channel.flush()
                     selectable.interestOp(SelectInterest.READ, true)
                     selector.select(selectable, SelectInterest.READ)
                 } else {
@@ -41,24 +42,32 @@ internal fun attachForReadingImpl(channel: ByteChannel, nioChannel: ReadableByte
 internal fun attachForReadingDirectImpl(channel: ByteChannel, nioChannel: ReadableByteChannel, selectable: Selectable, selector: SelectorManager): WriterJob {
     return writer(ioCoroutineDispatcher, channel) {
         try {
-            var rc: Int
-            val writeBlock = { buffer: ByteBuffer ->
-                rc = nioChannel.read(buffer) // we are writing from nio channel to CIO byte channel
-            }
+            selectable.interestOp(SelectInterest.READ, false)
 
-            while (true) {
-                rc = 0
-                channel.write(block = writeBlock)
-                if (rc == -1) {
-                    channel.close()
-                    break
-                } else if (rc == 0) {
-                    selectable.interestOp(SelectInterest.READ, true)
-                    selector.select(selectable, SelectInterest.READ)
-                } else {
-                    selectable.interestOp(SelectInterest.READ, false)
+            channel.writeSuspendSession {
+                while (true) {
+                    val buffer = request(1)
+                    if (buffer == null) {
+                        if (channel.isClosedForWrite) break
+                        channel.flush()
+                        tryAwait(1)
+                        continue
+                    }
+
+                    val rc = nioChannel.read(buffer)
+                    if (rc == -1) {
+                        break
+                    } else if (rc == 0) {
+                        channel.flush()
+                        selectable.interestOp(SelectInterest.READ, true)
+                        selector.select(selectable, SelectInterest.READ)
+                    } else {
+                        written(rc)
+                    }
                 }
             }
+
+            channel.close()
         } finally {
             if (nioChannel is SocketChannel) {
                 try {

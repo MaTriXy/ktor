@@ -6,6 +6,7 @@ import io.ktor.content.*
 import io.ktor.features.*
 import io.ktor.http.*
 import io.ktor.response.*
+import kotlinx.coroutines.experimental.*
 import kotlinx.coroutines.experimental.io.*
 
 /**
@@ -23,7 +24,7 @@ abstract class BaseApplicationResponse(override val call: ApplicationCall) : App
     }
 
     private var responded = false
-    override final val pipeline = ApplicationSendPipeline().apply {
+    final override val pipeline = ApplicationSendPipeline().apply {
         merge(call.application.sendPipeline)
         intercept(ApplicationSendPipeline.Engine) {
             if (responded)
@@ -37,16 +38,47 @@ abstract class BaseApplicationResponse(override val call: ApplicationCall) : App
         }
     }
 
-    protected fun commitHeaders(o: OutgoingContent) {
+    protected fun commitHeaders(content: OutgoingContent) {
         responded = true
-        o.status?.let { status(it) } ?: status() ?: status(HttpStatusCode.OK)
-        o.headers.forEach { name, values ->
-            for (value in values) {
-                header(name, value)
+
+        var transferEncodingSet = false
+
+        content.status?.let { status(it) } ?: status() ?: status(HttpStatusCode.OK)
+        content.headers.forEach { name, values ->
+            when (name) {
+                HttpHeaders.TransferEncoding -> transferEncodingSet = true
+                HttpHeaders.Upgrade -> {
+                    if (content !is OutgoingContent.ProtocolUpgrade)
+                        throw InvalidHeaderForContent(HttpHeaders.Upgrade, "non-upgrading response")
+                    for (value in values)
+                        headers.append(name, value, safeOnly = false)
+                    return@forEach
+                }
+            }
+            for (value in values)
+                headers.append(name, value)
+        }
+
+        val contentLength = content.contentLength
+        when {
+            contentLength != null -> {
+                // TODO: What should we do if TransferEncoding was set and length is present?
+                headers.append(HttpHeaders.ContentLength, contentLength.toString(), safeOnly = false)
+            }
+            !transferEncodingSet -> {
+                when (content) {
+                    is OutgoingContent.ProtocolUpgrade -> { }
+                    is OutgoingContent.NoContent -> headers.append(HttpHeaders.ContentLength, "0", safeOnly = false)
+                    else -> headers.append(HttpHeaders.TransferEncoding, "chunked", safeOnly = false)
+                }
             }
         }
 
-        val connection = call.request.headers["Connection"]
+        content.contentType?.let {
+            headers.append(HttpHeaders.ContentType, it.toString(), safeOnly = false)
+        }
+
+        val connection = call.request.headers[HttpHeaders.Connection]
         if (connection != null) {
             when {
                 connection.equals("close", true) -> header("Connection", "close")
@@ -89,28 +121,61 @@ abstract class BaseApplicationResponse(override val call: ApplicationCall) : App
             }
 
         // Do nothing, but maintain `when` exhaustiveness
-            is OutgoingContent.NoContent -> { /* no-op */
+            is OutgoingContent.NoContent -> {
                 commitHeaders(content)
+                return respondNoContent(content)
             }
         }
+    }
+
+    protected open suspend fun respondNoContent(content: OutgoingContent.NoContent) {
+        // Do nothing by default
     }
 
     protected open suspend fun respondWriteChannelContent(content: OutgoingContent.WriteChannelContent) {
         // Retrieve response channel, that might send out headers, so it should go after commitHeaders
         responseChannel().use {
             // Call user code to send data
+//            val before = totalBytesWritten
             content.writeTo(this)
+
+            // TODO currently we can't ensure length like that
+            // because a joined channel doesn't increment totalBytesWritten
+//            headers[HttpHeaders.ContentLength]?.toLong()?.let { length ->
+//                val written = totalBytesWritten - before
+//                ensureLength(length, written)
+//            }
         }
     }
 
     protected open suspend fun respondFromBytes(bytes: ByteArray) {
+        headers[HttpHeaders.ContentLength]?.toLong()?.let { length ->
+            ensureLength(length, bytes.size.toLong())
+        }
+
         responseChannel().use {
-            writeFully(bytes)
+            withContext(Unconfined) {
+                writeFully(bytes)
+            }
         }
     }
 
     protected open suspend fun respondFromChannel(readChannel: ByteReadChannel) {
-        readChannel.copyAndClose(responseChannel())
+        responseChannel().use {
+            val length = headers[HttpHeaders.ContentLength]?.toLong()
+            val copied = withContext(Unconfined) {
+                readChannel.copyTo(this, length ?: Long.MAX_VALUE)
+            }
+
+            length ?: return@use
+            val discarded = readChannel.discard(max = 1)
+            ensureLength(length, copied + discarded)
+        }
+    }
+
+    private fun ensureLength(expected: Long, actual: Long) {
+        if (expected < actual) throw BodyLengthIsTooLong(expected)
+        if (expected > actual) throw BodyLengthIsTooSmall(expected, actual)
     }
 
     protected abstract suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade)
@@ -124,4 +189,14 @@ abstract class BaseApplicationResponse(override val call: ApplicationCall) : App
     }
 
     class ResponseAlreadySentException : IllegalStateException("Response has already been sent")
+
+    class InvalidHeaderForContent(name: String, content: String) : IllegalStateException("Header $name is not allowed for $content")
+
+    class BodyLengthIsTooSmall(expected: Long, actual: Long) : IllegalStateException(
+            "Body.size is too small. Body: $actual, Content-Length: $expected"
+    )
+
+    class BodyLengthIsTooLong(expected: Long) : IllegalStateException(
+            "Body.size is too long. Expected $expected"
+    )
 }

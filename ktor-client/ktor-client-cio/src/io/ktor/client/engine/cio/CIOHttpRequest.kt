@@ -14,6 +14,7 @@ import java.io.*
 import java.net.*
 import java.util.*
 
+
 class CIOHttpRequest(
         override val call: HttpClientCall,
         private val dispatcher: CoroutineDispatcher,
@@ -24,13 +25,13 @@ class CIOHttpRequest(
     override val url: Url = requestData.url
     override val headers: Headers = requestData.headers
 
-    override val executionContext: CompletableDeferred<Unit> = CompletableDeferred()
+    override val executionContext: CompletableDeferred<Unit> = requestData.executionContext
 
     init {
         require(url.protocol.name == "http") { "CIOEngine support only http yet" }
     }
 
-    suspend override fun execute(content: OutgoingContent): HttpResponse {
+    override suspend fun execute(content: OutgoingContent): HttpResponse {
         val requestTime = Date()
         val address = InetSocketAddress(url.host, url.port)
         val socket = aSocket().tcp().connect(address)
@@ -52,9 +53,8 @@ class CIOHttpRequest(
         }
     }
 
-    private suspend fun writeRequest(output: ByteWriteChannel, body: OutgoingContent) {
+    private suspend fun writeRequest(output: ByteWriteChannel, content: OutgoingContent) {
         val builder = RequestResponseBuilder()
-        val bodySize = body.headers[HttpHeaders.ContentLength]?.toInt()
 
         try {
             builder.requestLine(method, url.fullPath, HttpProtocolVersion.HTTP_1_1.toString())
@@ -64,13 +64,25 @@ class CIOHttpRequest(
                 builder.headerLine("User-Agent", "CIO/ktor")
             }
 
-            headers.flattenEntries().forEach { (name, value) ->
+            headers.flattenForEach { name, value ->
+                if (HttpHeaders.ContentLength == name) return@flattenForEach // set later
+                if (HttpHeaders.ContentType == name) return@flattenForEach // set later
                 builder.headerLine(name, value)
             }
 
-            body.headers.flattenEntries().forEach { (name, value) ->
+            content.headers.flattenForEach { name, value ->
+                if (HttpHeaders.ContentLength == name) return@flattenForEach // TODO: throw exception for unsafe header?
+                if (HttpHeaders.ContentType == name) return@flattenForEach
                 builder.headerLine(name, value)
             }
+
+            val contentLength = headers[HttpHeaders.ContentLength] ?: content.contentLength?.toString()
+            val contentType = headers[HttpHeaders.ContentType] ?: content.contentType?.toString()
+
+            contentLength?.let { builder.headerLine(HttpHeaders.ContentLength, it) }
+            contentType?.let { builder.headerLine(HttpHeaders.ContentType, it) }
+
+            builder.headerLine(HttpHeaders.Connection, "close")
 
             builder.emptyLine()
             output.writePacket(builder.build())
@@ -79,18 +91,24 @@ class CIOHttpRequest(
             builder.release()
         }
 
-        if (body is OutgoingContent.NoContent) return
-        val chunked = bodySize == null || body.headers[HttpHeaders.TransferEncoding] == "chunked" || headers[HttpHeaders.TransferEncoding] == "chunked"
+        if (content is OutgoingContent.NoContent)
+            return
 
-        launch(dispatcher + executionContext) {
-            val channel = if (chunked) encodeChunked(output, coroutineContext).channel else output
+        val contentLengthSet = content.headers.contains(HttpHeaders.ContentLength)
+        val chunked = contentLengthSet || content.headers[HttpHeaders.TransferEncoding] == "chunked" || headers[HttpHeaders.TransferEncoding] == "chunked"
+
+        launch(dispatcher, parent = executionContext) {
+            val chunkedJob: EncoderJob? = if (chunked) encodeChunked(output, coroutineContext) else null
+            val channel = chunkedJob?.channel ?: output
+
             try {
-                channel.writeBody(body)
+                channel.writeBody(content)
             } catch (cause: Throwable) {
                 channel.close(cause)
                 executionContext.completeExceptionally(cause)
             } finally {
                 channel.close()
+                chunkedJob?.join()
                 executionContext.complete(Unit)
             }
         }
