@@ -1,6 +1,7 @@
 <component name="ProjectDictionaryState">
   <dictionary name="cy">
     <words>
+      <w>abcdefghijklmnopqrstuvwxyz</w>
       <w>agentlib</w>
       <w>algo</w>
       <w>api</w>
@@ -14,13 +15,17 @@
       <w>byteranges</w>
       <w>cacheable</w>
       <w>changeit</w>
+      <w>cnonce</w>
       <w>codec</w>
       <w>codecs</w>
       <w>conjuror</w>
       <w>convertor</w>
+      <w>coroutines</w>
       <w>cors</w>
       <w>crypto</w>
+      <w>datagrams</w>
       <w>deflater</w>
+      <w>deserialized</w>
       <w>dest</w>
       <w>digester</w>
       <w>disguisement</w>
@@ -28,6 +33,8 @@
       <w>djvu</w>
       <w>doctype</w>
       <w>dquotes</w>
+      <w>dropwizard</w>
+      <w>ecdhe</w>
       <w>endian</w>
       <w>endlines</w>
       <w>etags</w>
@@ -49,10 +56,14 @@
       <w>jdwp</w>
       <w>jfrog</w>
       <w>jvmstatic</w>
+      <w>kotlinx</w>
       <w>kube</w>
       <w>libnetty</w>
+      <w>libopenssl</w>
       <w>libtcnative</w>
       <w>maxage</w>
+      <w>microservice</w>
+      <w>microservices</w>
       <w>mimelist</w>
       <w>misconfigured</w>
       <w>mkdirs</w>
@@ -62,9 +73,12 @@
       <w>multiquery</w>
       <w>multirange</w>
       <w>multithreaded</w>
+      <w>multitier</w>
       <w>multivalue</w>
       <w>mykey</w>
+      <w>nagle</w>
       <w>navbar</w>
+      <w>nodelay</w>
       <w>noone</w>
       <w>noop</w>
       <w>passwd</w>
@@ -87,6 +101,7 @@
       <w>resized</w>
       <w>revalidate</w>
       <w>ringbolts</w>
+      <w>secp</w>
       <w>seekable</w>
       <w>sessionkey</w>
       <w>slideshow</w>
@@ -95,6 +110,7 @@
       <w>subfolder</w>
       <w>subtrim</w>
       <w>tagline</w>
+      <w>tailcard</w>
       <w>tcnative</w>
       <w>teardowns</w>
       <w>testuser</w>
@@ -105,8 +121,10 @@
       <w>tortious</w>
       <w>typesafe</w>
       <w>uncatastrophied</w>
+      <w>undeployed</w>
       <w>unencoded</w>
       <w>ungzip</w>
+      <w>unintercepted</w>
       <w>unopinionated</w>
       <w>unsubscribe</w>
       <w>unsweetly</w>
@@ -114,6 +132,7 @@
       <w>webp</w>
       <w>websocket</w>
       <w>websockets</w>
+      <w>wget</w>
       <w>woff</w>
       <w>youkube</w>
       <w>yyyy</w>
